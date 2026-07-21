@@ -29,6 +29,7 @@ from qis.portfolio.signal_data import StrategySignalData
 from qis.portfolio.risk.ewm_covar_risk import compute_portfolio_vol
 from qis.portfolio.risk.contributions import compute_portfolio_risk_contributions
 from qis.utils.annualisation import infer_annualisation_factor_from_df
+from qis.utils.df_str import date_to_str
 
 # default performance and regime params
 PERF_PARAMS = PerfParams(freq='W-WED')
@@ -179,7 +180,7 @@ class PortfolioData:
             costs = self.get_costs(add_total=False, is_unit_based_traded_volume=is_unit_based_traded_volume)
             pnl = pnl.subtract(costs)
         if add_total:
-            pnl.insert(loc=0, value=pnl.sum(1), column='Total')
+            pnl.insert(loc=0, value=pnl.sum(axis=1), column='Total')
         if time_period is not None:
             pnl = time_period.locate(pnl)
         if freq is not None:
@@ -300,9 +301,9 @@ class PortfolioData:
         Args:
             time_period: Time period for which to calculate exposures. If None,
                 uses the full available time series.
-            total_name: Column name for the total exposure aggregation. 
+            total_name: Column name for the total exposure aggregation.
                 Defaults to 'Total'.
-            weights_freq: Frequency for resampling exposures data. 
+            weights_freq: Frequency for resampling exposures data.
                 Defaults to 'W-WED' (weekly on Wednesday).
             total_column: Column name for total in group dictionary. If None,
                 no total column is included in grouping.
@@ -310,12 +311,12 @@ class PortfolioData:
             A tuple containing:
                 - grouped_weights_agg: Dictionary mapping group names to DataFrames
                   with columns for total, net long, and net short exposures.
-                - grouped_weights_by_inst: Dictionary mapping group names to 
-                  DataFrames containing individual instrument exposures within 
+                - grouped_weights_by_inst: Dictionary mapping group names to
+                  DataFrames containing individual instrument exposures within
                   each group.
 
         Note:
-            Positive exposures represent long positions, negative exposures 
+            Positive exposures represent long positions, negative exposures
             represent short positions. Net long sums only positive values,
             net short sums only negative values.
         """
@@ -328,9 +329,9 @@ class PortfolioData:
         for group, tickers in group_dict.items():
             exposures_by_inst = all_exposures[tickers]
             grouped_weights_by_inst[group] = exposures_by_inst
-            total = dfa.nansum(exposures_by_inst, axis=1).rename(total_name)
-            net_long = dfa.nansum_positive(exposures_by_inst, axis=1).rename('Net Long')
-            net_short = dfa.nansum_negative(exposures_by_inst, axis=1).rename('Net Short')
+            total = dfa.df_nansum(exposures_by_inst, axis=1).rename(total_name)
+            net_long = dfa.df_nansum_positive(exposures_by_inst, axis=1).rename('Net Long')
+            net_short = dfa.df_nansum_negative(exposures_by_inst, axis=1).rename('Net Short')
             grouped_weights_agg[group] = pd.concat([total, net_long, net_short], axis=1)
         return grouped_weights_agg, grouped_weights_by_inst
 
@@ -356,9 +357,9 @@ class PortfolioData:
         for group, tickers in group_dict.items():
             pnls_by_inst = pnls[tickers]
             grouped_pnls_by_inst[group] = pnls_by_inst.cumsum(axis=0)
-            total = dfa.nansum(pnls_by_inst, axis=1).rename(total_name)
-            net_long = dfa.nansum(pnl_positive_exp[tickers], axis=1).rename('Net Long')
-            net_short = dfa.nansum(pnl_negative_exp[tickers], axis=1).rename('Net Short')
+            total = dfa.df_nansum(pnls_by_inst, axis=1).rename(total_name)
+            net_long = dfa.df_nansum(pnl_positive_exp[tickers], axis=1).rename('Net Long')
+            net_short = dfa.df_nansum(pnl_negative_exp[tickers], axis=1).rename('Net Short')
             grouped_pnls_agg[group] = pd.concat([total, net_long, net_short], axis=1).cumsum(axis=0)
         return grouped_pnls_agg, grouped_pnls_by_inst
 
@@ -595,21 +596,21 @@ class PortfolioData:
                                   is_unit_based_traded_volume=is_unit_based_traded_volume,
                                   add_total=False,
                                   time_period=time_period)
-            data = data.sum(0)
+            data = data.sum(axis=0)
             # print(f"total costs, is_unit_based_traded_volume={is_unit_based_traded_volume} = {np.nansum(data)}")
         elif attribution_metric == AttributionMetric.TURNOVER:
             data = self.get_turnover(is_agg=False, is_grouped=False, roll_period=None,
                                      add_total=False,
                                      time_period=time_period)
             an = infer_annualisation_factor_from_df(data=data)
-            data = an * data.mean(0)
+            data = an * data.mean(axis=0)
             # print(f"total turnover = {np.nansum(data)}")
         elif attribution_metric == AttributionMetric.VOL_ADJUSTED_TURNOVER:
             data = self.get_turnover(is_agg=False, is_grouped=False, roll_period=None,
                                      add_total=False, is_vol_adjusted=True,
                                      time_period=time_period)
             an = infer_annualisation_factor_from_df(data=data)
-            data = an * data.mean(0)
+            data = an * data.mean(axis=0)
 
         else:
             raise NotImplementedError(f"{attribution_metric}")
@@ -714,8 +715,8 @@ class PortfolioData:
         distributions_by_instrument_yield_rolling = distributions_by_instrument_yield_freq.fillna(0.0).rolling(
             div_rolling_period).sum()
         # find total distributions
-        distribution_yield = distributions_by_instrument_yield_freq.sum(1)
-        distribution_yield_rolling = distributions_by_instrument_yield_rolling.sum(1)
+        distribution_yield = distributions_by_instrument_yield_freq.sum(axis=1)
+        distribution_yield_rolling = distributions_by_instrument_yield_rolling.sum(axis=1)
         if time_period is not None:
             distributions_by_instrument_yield_rolling = time_period.locate(distributions_by_instrument_yield_rolling)
             distribution_yield = time_period.locate(distribution_yield)
@@ -1361,9 +1362,9 @@ class PortfolioData:
                                                                   x_rotation=90))
         if title is None:
             if is_grouped:
-                title = f"Weights by groups on {qis.date_to_str(weights_1.name)}"
+                title = f"Weights by groups on {date_to_str(weights_1.name)}"
             else:
-                title = f"Weights by instruments on {qis.date_to_str(weights_1.name)}"
+                title = f"Weights by instruments on {date_to_str(weights_1.name)}"
         qis.plot_bars(df=weights_1,
                       skip_y_axis=True,
                       title=title,
@@ -1388,10 +1389,10 @@ class PortfolioData:
             else:
                 weights_0 = weights.iloc[-2, :]
             delta = weights_1.subtract(weights_0)
-            post_title = f"rebalancing between {qis.date_to_str(weights_0.name)} and {qis.date_to_str(weights_1.name)}"
+            post_title = f"rebalancing between {date_to_str(weights_0.name)} and {date_to_str(weights_1.name)}"
         else:
             delta = weights_1
-            post_title = f"rebalancing on {qis.date_to_str(weights_1.name)} starting from zero"
+            post_title = f"rebalancing on {date_to_str(weights_1.name)} starting from zero"
         if add_top_bar_values is None:
             if len(delta.index) <= 10:
                 add_top_bar_values = True
@@ -1435,11 +1436,11 @@ class PortfolioData:
             if snapshot_period == SnapshotPeriod.LAST:
                 var_1 = portfolio_vars.iloc[-1, :]
                 if is_correlated:
-                    title = title or f"Correlated {freq}-freq 99%-VAR with {vol_span}-span ewma covar: {qis.date_to_str(var_1.name)}"
+                    title = title or f"Correlated {freq}-freq 99%-VAR with {vol_span}-span ewma covar: {date_to_str(var_1.name)}"
                 else:
-                    title = title or f"Independent {freq}-freq 99%-VAR with {vol_span}-span ewma vols: {qis.date_to_str(var_1.name)}"
+                    title = title or f"Independent {freq}-freq 99%-VAR with {vol_span}-span ewma vols: {date_to_str(var_1.name)}"
             elif snapshot_period == SnapshotPeriod.AVG:
-                var_1 = portfolio_vars.mean(0)
+                var_1 = portfolio_vars.mean(axis=0)
                 period = qis.get_time_period(df=portfolio_vars).to_str(date_separator='-')
                 if is_correlated:
                     title = title or f"Avg Correlated {freq}-freq 99%-VAR with {vol_span}-span: {period}"
@@ -1461,9 +1462,9 @@ class PortfolioData:
             else:
                 if snapshot_period == SnapshotPeriod.LAST:
                     var_1 = instrument_vars.iloc[-1, :]
-                    title = title or f"Instrument independent {freq}-freq 99%-VAR with {vol_span}-span ewma vols: {qis.date_to_str(var_1.name)}"
+                    title = title or f"Instrument independent {freq}-freq 99%-VAR with {vol_span}-span ewma vols: {date_to_str(var_1.name)}"
                 elif snapshot_period == SnapshotPeriod.AVG:
-                    var_1 = instrument_vars.mean(0)
+                    var_1 = instrument_vars.mean(axis=0)
                     period = qis.get_time_period(df=instrument_vars).to_str()
                     title = title or f"Avg Independent {freq}-freq 99%-VAR with {vol_span}-span ewma vols: {period}"
                 elif snapshot_period == SnapshotPeriod.MAX:

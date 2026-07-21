@@ -5,7 +5,6 @@ import re
 import pandas as pd
 from typing import Union
 
-
 BUS_DAYS_PER_YEAR = 252  # applied for volatility normalization
 WEEK_DAYS_PER_YEAR = 260  # calendar days excluding weekends in a year
 CALENDAR_DAYS_PER_YEAR = 365
@@ -47,12 +46,13 @@ def get_annualization_factor(freq: str,
     """
     an_days = 365.0 if is_calendar else default_trading_days
 
-    # Intraday frequencies
-    if freq in ['1M']:  # 1 minute
+    # Intraday frequencies. Note: '1M'/'5M' as minute aliases collided with monthly
+    # under pandas < 2.2 and have been replaced by 'min'/'5min' in pandas 3.0.
+    if freq in ['1min', 'min', 'T']:
         return an_days * 24.0 * 60.0
-    elif freq in ['5M']:
+    elif freq in ['5min', '5T']:
         return an_days * 24.0 * 12.0
-    elif freq in ['15M', '15T']:
+    elif freq in ['15min', '15T']:
         return an_days * 24.0 * 4.0
     elif freq in ['h', 'H']:  # hourly
         return an_days * 24.0
@@ -74,10 +74,16 @@ def get_annualization_factor(freq: str,
         return 13.0
 
     # Monthly frequencies
-    elif freq in ['1M', 'ME', 'M', 'BM', 'MS', 'BMS']:
+    # 'M' removed in pandas 3.0; kept here only for back-compat with 2.x callers.
+    elif freq in ['ME', 'M', 'BM', 'MS', 'BMS', 'BME']:
         return 12.0
     elif freq in ['2M', '2ME', '2BM', '2MS', '2BMS']:
         return 6.0
+    # Week-of-month / last-week-of-month anchored offsets (e.g. 'WOM-2WED' = 2nd Wednesday
+    # of each month, 'LWOM-FRI' = last Friday): monthly cadence. Handled explicitly because
+    # the generic regex below cannot parse the week-number in the anchor (the '2' in 'WOM-2WED').
+    elif freq.upper().startswith('WOM-') or freq.upper().startswith('LWOM-'):
+        return 12.0
 
     # Quarterly frequencies
     elif freq in ['QE', 'Q', 'DQ', 'BQ', 'QS', 'BQS', 'QE-DEC', 'QE-JAN', 'QE-FEB', 'Q-DEC']:
@@ -155,7 +161,7 @@ def infer_annualisation_factor_from_df(data: Union[pd.DataFrame, pd.Series]) -> 
         freq = None
     else:
         freq = pd.infer_freq(data.index)
-        
+
     if freq is None:
         warnings.warn(
             f"in infer_annualisation_factor_from_df: cannot infer {freq} - using {BUS_DAYS_PER_YEAR}\n data.index={data.index}",
@@ -190,3 +196,53 @@ def get_annualisation_conversion_factor(from_freq: str, to_freq: str) -> float:
     to_periods = get_annualization_factor(to_freq)
 
     return from_periods / to_periods
+
+
+# canonical periods-per-year tiers used to classify an *input data* index by median spacing
+# and to build a display label. Keyed by tier so the same numbers drive both uses.
+_TIER_FREQ_LABEL = {260.0: 'B', 52.0: 'W', 12.0: 'ME', 4.0: 'QE', 1.0: 'YE'}
+
+
+def infer_data_periods_per_year(data: Union[pd.DataFrame, pd.Series, pd.DatetimeIndex]) -> float:
+    """
+    classify the native sampling frequency of a price/return index into a canonical
+    periods-per-year tier (260 daily / 52 weekly / 12 monthly / 4 quarterly / 1 annual).
+
+    Uses the *median* spacing between observations, so it is robust to holiday/weekend gaps
+    where pd.infer_freq() returns None (unlike infer_annualisation_factor_from_df, which then
+    silently falls back to BUS_DAYS_PER_YEAR and would treat monthly data as daily).
+    """
+    index = data.index if hasattr(data, 'index') else data
+    index = pd.DatetimeIndex(index).dropna().sort_values()
+    if len(index) < 3:
+        raise ValueError("need at least 3 observations to infer the data sampling frequency")
+    median_days = float(index.to_series().diff().dt.days.dropna().median())
+    if median_days <= 3.0:
+        return 260.0  # daily / business-daily (median weekday gap is 1, weekend bridges aside)
+    if median_days <= 10.0:
+        return 52.0  # weekly
+    if median_days <= 45.0:
+        return 12.0  # monthly
+    if median_days <= 135.0:
+        return 4.0  # quarterly
+    return 1.0  # annual or coarser
+
+
+def infer_data_frequency_label(data: Union[pd.DataFrame, pd.Series, pd.DatetimeIndex]) -> str:
+    """
+    best-effort pandas-style frequency label for display in panel titles.
+    Prefers the exact pandas freq (e.g. 'B', 'W-WED') when the index is regular, otherwise
+    falls back to the median-spacing tier label so a label is always shown.
+    """
+    index = pd.DatetimeIndex(data.index if hasattr(data, 'index') else data)
+    freq = pd.infer_freq(index) if len(index) >= 3 else None
+    if freq is not None:
+        # drop the December/anchor suffix for quarterly/annual ('QE-DEC' -> 'QE') so the label
+        # matches the un-anchored convention used elsewhere; keep weekly anchors ('W-WED').
+        if freq[:1] in ('Q', 'Y', 'A') and '-' in freq:
+            freq = freq.split('-')[0]
+        return freq
+    try:
+        return _TIER_FREQ_LABEL.get(infer_data_periods_per_year(index), '')
+    except ValueError:
+        return ''

@@ -15,6 +15,7 @@ import qis.utils.dates as da
 import qis.utils.df_freq as dff
 import qis.utils.np_ops as npo
 import qis.utils.df_ops as dfo
+from qis.utils.df_ops import df_price_ffill_between_nans
 from qis.utils.df_groups import get_group_dict
 from qis.perfstats.config import PerfStat, ReturnTypes, PerfParams
 from qis.utils.annualisation import infer_annualisation_factor_from_df, CALENDAR_DAYS_PER_YEAR_SHARPE
@@ -198,7 +199,15 @@ def compute_total_return(prices: Union[pd.DataFrame, pd.Series]) -> Union[np.nda
             price_0 = dfo.get_first_nonnan_values(df=prices)
             warnings.warn(f"detected nan price for prices = {prices.iloc[0, np.isnan(price_0)]},"
                           f" using first non nan price = {price_0} for {prices.columns}")
+        # Symmetric: handle NaN at the END too. Common case: a fund that
+        # terminated mid-dataset, or an ETF that delisted, leaving trailing
+        # NaN. Without this fix, total return is NaN even though the data
+        # to compute it is right there in the series.
         price_end = prices.iloc[-1, :].to_numpy()
+        if np.any(np.isnan(price_end)):
+            price_end = dfo.get_last_nonnan_values(df=prices)
+            warnings.warn(f"detected nan price for prices = {prices.iloc[-1, np.isnan(price_end)]},"
+                          f" using last non nan price = {price_end} for {prices.columns}")
 
     elif isinstance(prices, pd.Series):
         price_0 = prices.iloc[0]
@@ -206,7 +215,12 @@ def compute_total_return(prices: Union[pd.DataFrame, pd.Series]) -> Union[np.nda
             price_0 = dfo.get_first_nonnan_values(df=prices)
             warnings.warn(f"detected nan price for prices at date = {prices.index[0]},"
                           f" using first non nan price = {price_0} for {prices.name}")
+        # Same symmetric fix for the Series branch.
         price_end = prices.iloc[-1]
+        if np.isnan(price_end):
+            price_end = dfo.get_last_nonnan_values(df=prices)
+            warnings.warn(f"detected nan price for prices at date = {prices.index[-1]},"
+                          f" using last non nan price = {price_end} for {prices.name}")
     else:
         raise TypeError(f"unsuported type={type(prices)}")
 
@@ -240,7 +254,12 @@ def compute_pa_return(prices: Union[pd.DataFrame, pd.Series],
         ratio = np.where(np.greater(ratio, 0.0), ratio, np.nan)
         if num_years > 1.0:
             # Geometric compounding for periods >1 year
-            compounded_return_pa = np.power(ratio, 1.0 / num_years, where=np.isfinite(ratio)) - 1
+            # NumPy 2.x: explicit out= so non-finite positions are deterministic nan.
+            compounded_return_pa = np.power(
+                ratio, 1.0 / num_years,
+                out=np.full_like(ratio, np.nan, dtype=float),
+                where=np.isfinite(ratio),
+            ) - 1
         else:
             if annualize_less_1y:
                 # Linear annualization for periods <1 year
@@ -250,7 +269,10 @@ def compute_pa_return(prices: Union[pd.DataFrame, pd.Series],
                 compounded_return_pa = ratio - 1.0
     else:
         n = len(prices.columns) if isinstance(prices, pd.DataFrame) else 1
-        compounded_return_pa = np.zeros_like(n)
+        # Note: np.zeros_like(n) where n is an int returns a 0-d scalar 0,
+        # not a vector of zeros — that was the previous bug. Use np.zeros(n)
+        # so DataFrame callers get a column-aligned vector back.
+        compounded_return_pa = np.zeros(n)
 
     return compounded_return_pa
 
@@ -284,15 +306,13 @@ def compute_returns_dict(prices: Union[pd.DataFrame, pd.Series],
             return_dict = {PerfStat.TOTAL_RETURN.to_str(): np.nan,
                            PerfStat.PA_RETURN.to_str(): np.nan,
                            PerfStat.AN_LOG_RETURN.to_str(): np.nan,
-                           PerfStat.AN_LOG_RETURN_EXCESS.to_str(): np.nan,
-                           PerfStat.APR.to_str(): np.nan,
+                           PerfStat.AN_LOG_EXCESS_RETURN.to_str(): np.nan,
                            PerfStat.NUM_YEARS.to_str(): np.nan}
         else:
             return_dict = {PerfStat.TOTAL_RETURN.to_str(): np.full(n, fill_value=np.nan),
                            PerfStat.PA_RETURN.to_str(): np.full(n, fill_value=np.nan),
                            PerfStat.AN_LOG_RETURN.to_str(): np.full(n, fill_value=np.nan),
-                           PerfStat.AN_LOG_RETURN_EXCESS.to_str(): np.full(n, fill_value=np.nan),
-                           PerfStat.APR.to_str(): np.full(n, fill_value=np.nan),
+                           PerfStat.AN_LOG_EXCESS_RETURN.to_str(): np.full(n, fill_value=np.nan),
                            PerfStat.NUM_YEARS.to_str(): np.full(n, fill_value=np.nan)}
         return return_dict
 
@@ -317,6 +337,7 @@ def compute_returns_dict(prices: Union[pd.DataFrame, pd.Series],
         excess_return_pa = compounded_return_pa
 
     # Extract start and end values
+
     if isinstance(prices, pd.DataFrame):
         start_value = prices.iloc[0, :].to_numpy()
         end_value = prices.iloc[-1, :].to_numpy()
@@ -324,14 +345,21 @@ def compute_returns_dict(prices: Union[pd.DataFrame, pd.Series],
         start_value = prices.iloc[0]
         end_value = prices.iloc[-1]
 
+    # NumPy 2.x: use helper lambdas with explicit out= to avoid uninitialized memory on masked positions.
+    def _safe_log1p(x):
+        x_arr = np.asarray(x, dtype=float)
+        return np.log(
+            1.0 + x_arr,
+            out=np.full_like(x_arr, np.nan, dtype=float),
+            where=np.greater(x_arr, -1.0),
+        )
+
     # Build return dictionary
     return_dict = {PerfStat.TOTAL_RETURN.to_str(): total_return,
                    PerfStat.PA_RETURN.to_str(): compounded_return_pa,
                    PerfStat.PA_EXCESS_RETURN.to_str(): excess_return_pa,
-                   PerfStat.AN_LOG_RETURN.to_str(): np.log(1.0 + compounded_return_pa, where=np.greater(compounded_return_pa, -1.0)),
-                   PerfStat.AN_LOG_RETURN_EXCESS.to_str(): np.log(1.0 + excess_return_pa, where=np.greater(excess_return_pa, -1.0)),
-                   PerfStat.AVG_AN_RETURN.to_str(): np.divide(total_return, num_years),
-                   PerfStat.APR.to_str(): CALENDAR_DAYS_PER_YEAR_SHARPE*total_return/num_days if num_days > 0 else CALENDAR_DAYS_PER_YEAR_SHARPE*total_return,
+                   PerfStat.AN_LOG_RETURN.to_str(): _safe_log1p(compounded_return_pa),
+                   PerfStat.AN_LOG_EXCESS_RETURN.to_str(): _safe_log1p(excess_return_pa),
                    PerfStat.NAV1.to_str(): (1.0+total_return),
                    PerfStat.NUM_YEARS.to_str(): num_years,
                    PerfStat.START_DATE.to_str(): prices.index[0],
@@ -374,8 +402,13 @@ def compute_excess_returns(returns: Union[pd.Series, pd.DataFrame],
     Returns:
         Excess return time series (returns minus risk-free rate)
     """
-    # Convert annualized rates to period returns
-    rates_dt = dfo.multiply_df_by_dt(df=rates_data, dates=returns.index, lag=None)
+    # Use lag=1 on the rate series: funding cost at time t reflects the
+    # rate that was set at t-1 (the rate the manager could observe and
+    # plan around). Previously this used lag=None (contemporaneous rate),
+    # which introduces a small look-ahead bias relative to
+    # get_excess_returns_nav() that uses lag=1. The two functions now
+    # agree on convention.
+    rates_dt = dfo.multiply_df_by_dt(df=rates_data, dates=returns.index, lag=1)
     returns0 = returns.copy()
     if isinstance(returns, pd.Series):
         returns0 = returns0.to_frame(name=returns.name)
@@ -492,40 +525,63 @@ def portfolio_navs_to_additive(grouped_nav: pd.DataFrame,
         DataFrame with adjusted asset NAVs
     """
     portfolio_nav = grouped_nav[portfolio_name]
-    ac_nav_adj = adjust_navs_to_portfolio_pa(portfolio_nav=portfolio_nav,
-                                             asset_prices=grouped_nav.drop(columns=[portfolio_name]))
+    ac_nav_adj = adjust_component_navs_to_portfolio(portfolio_nav=portfolio_nav,
+                                                    component_navs=grouped_nav.drop(columns=[portfolio_name]))
     grouped_nav = pd.concat([portfolio_nav, ac_nav_adj], axis=1)
     return grouped_nav
 
 
-def adjust_navs_to_portfolio_pa(portfolio_nav: pd.Series,
-                                asset_prices: pd.DataFrame
-                                ) -> pd.DataFrame:
-    """Adjust asset NAVs so PA returns are additive to portfolio.
+def adjust_component_navs_to_portfolio(portfolio_nav: pd.Series,
+                                       component_navs: pd.DataFrame
+                                       ) -> pd.DataFrame:
+    """Rescale component NAVs so their PA returns sum to the portfolio PA return.
 
-    Uses time-weighted adjustment to match terminal value while
-    maintaining relative performance characteristics.
+    Used for portfolio NAV decomposition: when a portfolio's total return is
+    expressed as a sum of additive components (carry types, fundamental return
+    sources, gross vs net vs costs, etc.), the corresponding component NAVs
+    don't *automatically* sum back to the portfolio NAV — geometric compounding
+    introduces a small residual gap from the linear additivity of period
+    returns. This function rescales each component NAV by a common
+    time-weighted factor that closes the gap, so the visualised stacked NAVs
+    add up to the portfolio total.
+
+    Formula::
+
+        c_m(t) = ((portfolio_pa / n + 1) / (mean(component_pa) + 1)) ** t
+
+    where ``n`` is the number of components and ``t`` is years-from-start.
+    For truly additive components, ``mean(component_pa) ≈ portfolio_pa / n``
+    and ``c_m`` is close to 1 — only a small adjustment is applied.
+
+    Each component is rescaled by the same ``c_m(t)``, preserving the
+    *relative* contributions of components to the portfolio while making
+    them sum to the portfolio NAV exactly at the terminal point. Intended
+    use is display / stacked-area charting, not formal attribution.
 
     Args:
-        portfolio_nav: Portfolio NAV time series
-        asset_prices: Asset NAV DataFrame
+        portfolio_nav: Portfolio NAV time series.
+        component_navs: DataFrame of component NAVs (one column per
+            additive return component — e.g. total return, dividend
+            yield, funding cost).
 
     Returns:
-        Adjusted asset NAV DataFrame
+        DataFrame of rescaled component NAVs, same columns as input.
     """
     portfolio_pa = compute_pa_return(prices=portfolio_nav)
-    assets_pa = compute_pa_return(prices=asset_prices)
-    n = len(asset_prices.columns)
-    asset_prices_adj = asset_prices.copy()
+    components_pa = compute_pa_return(prices=component_navs)
+    n = len(component_navs.columns)
+    component_navs_adj = component_navs.copy()
 
-    # Compute time-weighted adjustment factor
+    # Time-weighted adjustment factor. For truly additive components,
+    # mean(component_pa) ≈ portfolio_pa / n, so c_m ≈ 1 and adjustment
+    # is small. The small deviation closes the compounding gap.
     t = (portfolio_nav.index - portfolio_nav.index[0]).days.to_numpy() / CALENDAR_DAYS_PER_YEAR_SHARPE
-    c_m = ((portfolio_pa / n + 1.0) / (np.nanmean(assets_pa) + 1.0)) ** t
+    c_m = ((portfolio_pa / n + 1.0) / (np.nanmean(components_pa) + 1.0)) ** t
     ratio = npo.np_array_to_df_columns(a=c_m, ncols=n)
 
-    asset_prices_adj = asset_prices_adj.multiply(ratio)
-    asset_prices_adj = asset_prices_adj[asset_prices.columns]
-    return asset_prices_adj
+    component_navs_adj = component_navs_adj.multiply(ratio)
+    component_navs_adj = component_navs_adj[component_navs.columns]
+    return component_navs_adj
 
 
 def compute_net_return_ex_perf_man_fees(gross_return: pd.Series,
@@ -576,7 +632,16 @@ def compute_net_return_ex_perf_man_fees(gross_return: pd.Series,
         nav_data.loc[date, 'NAV'] = nav_data.loc[date, 'GAV']-nav_data.loc[date, 'PF']
         nav_data.loc[date, 'HWM'] = nav_data.loc[last_date, 'HWM']
 
-        # Crystallize performance fee at period end
+        # Crystallize performance fee at period end.
+        # On crystallization day, CPF (crystallized perf fee) is recorded as
+        # the accrued PF, HWM is bumped up to max(NAV, prior HWM), and GAV is
+        # reduced by CPF so that GAV on the next iteration represents the
+        # capital actually carried forward (= NAV before the next period's
+        # gross return is applied). NAV is intentionally NOT recomputed here;
+        # the relevant invariant is `nav_data[last_date, 'GAV'] == NAV after
+        # crystallization` going into the next iteration. The displayed
+        # GAV column therefore has a discontinuity at crystallization dates,
+        # which is the audit-trail intent (fee paid out of GAV).
         if perf_cris_date:
             nav_data.loc[date, 'CPF'] = nav_data.loc[date, 'PF']
             nav_data.loc[date, 'HWM'] = np.maximum(nav_data.loc[date, 'NAV'], nav_data.loc[last_date, 'HWM'])
@@ -739,6 +804,14 @@ def prices_at_freq(prices: Union[pd.Series, pd.DataFrame],
                                include_end_date=include_end_date,
                                fill_na_method=fill_na_method)
     else:
+        # Previously this branch ignored `ffill_nans` entirely and gated
+        # only on `fill_na_method` (which defaults to 'ffill'). Result:
+        # callers passing ffill_nans=False without also overriding
+        # fill_na_method got ffilled prices anyway — opposite of what the
+        # parameter name promises. Mirror the freq-is-not-None branch:
+        # ffill_nans=False disables fill regardless of fill_na_method.
+        if not ffill_nans:
+            fill_na_method = None
         if fill_na_method is not None:
             if fill_na_method == 'ffill':
                 prices = prices.ffill()
@@ -802,8 +875,25 @@ def to_portfolio_returns(weights: pd.DataFrame,
                          ) -> pd.Series:
     """Compute portfolio returns from asset weights and returns.
 
-    Uses lagged weights (rebalanced at prior period close) and handles
-    NaN returns properly by excluding them from aggregation.
+    Uses lagged weights (rebalanced at prior period close).
+
+    NaN handling — IMPORTANT:
+        This function aggregates ``returns * lagged_weights`` via ``nansum``
+        across the asset axis. A NaN return contributes ``0`` to that day's
+        portfolio PnL — equivalent to "asset held its notional but earned 0%".
+        It does NOT renormalize remaining asset weights.
+
+        Example: weights = [0.5, 0.5], returns = [+0.02, NaN]. Output =
+        ``nansum([0.5*0.02, 0.5*NaN]) = 0.01``, not 0.02.
+
+        This is the right convention if NaN means "asset wasn't tradable
+        that day, position held in cash earning 0%". It is wrong if NaN
+        means "data missing, treat the position as fully invested in the
+        remaining assets". For the latter, drop NaN rows or renormalize
+        weights yourself before calling.
+
+        A date where ALL asset returns are NaN produces NaN portfolio
+        return (rather than 0), so fully-NaN periods propagate correctly.
 
     Args:
         weights: Portfolio weight DataFrame (columns = assets)
@@ -830,6 +920,11 @@ def portfolio_returns_to_nav(returns: pd.DataFrame,
                              freq: Optional[str] = None
                              ) -> Union[pd.Series, pd.DataFrame]:
     """Aggregate portfolio returns across assets to single NAV.
+
+    NaN handling: uses ``nansum`` across columns — a NaN contribution
+    on a given date is treated as 0 PnL, equivalent to "this asset held
+    its notional but earned 0% that period". See ``to_portfolio_returns``
+    docstring for the full discussion.
 
     Args:
         returns: Return DataFrame with assets as columns
@@ -887,16 +982,17 @@ def to_zero_first_nonnan_returns(returns: Union[pd.Series, pd.DataFrame],
                         returns.loc[prev_idx, column] = 0.0
 
     elif init_period == 1:
-        # Set first non-NaN value to zero
+        # Set first non-NaN value to zero. Previously there was a guard
+        # `if first_nonnan_index >= first_date` here, but since
+        # `first_date = returns.index[0]`, any non-NaN index is by
+        # definition >= the first index — the check was always True.
+        # Removed.
         first_nonnan_index = dfo.get_nonnan_index(df=returns, position='first')
-        first_date = returns.index[0]
         if isinstance(returns, pd.Series):
-            if first_nonnan_index >= first_date:
-                returns.loc[first_nonnan_index] = 0.0
+            returns.loc[first_nonnan_index] = 0.0
         else:
             for first_nonnan_index_, column in zip(first_nonnan_index, returns.columns):
-                if first_nonnan_index_ >= first_date:
-                    returns.loc[first_nonnan_index_, column] = 0.0
+                returns.loc[first_nonnan_index_, column] = 0.0
     else:
         warnings.warn(f"in to_zero_first_nonnan_returns init_period={init_period} is not supported")
 
@@ -942,41 +1038,205 @@ def get_excess_returns_nav(prices: Union[pd.DataFrame, pd.Series],
     return excess_nav
 
 
-def df_price_ffill_between_nans(prices: Union[pd.Series, pd.DataFrame],
-                                method: Optional[str] = 'ffill'
-                                ) -> Union[pd.Series, pd.DataFrame]:
-    """Forward-fill prices only between first and last non-NaN dates.
+# =============================================================================
+# LEVERAGE ADJUSTMENT
+# =============================================================================
+# Paste these three functions into qis/perfstats/returns.py alongside
+# compute_excess_returns. The annualisation import at the top of that file
+# (from qis.utils.annualisation import infer_annualisation_factor_from_df)
+# is already present, so no additional imports are needed.
 
-    Preserves leading and trailing NaN values while filling gaps.
+
+def delever_returns(returns: Union[pd.Series, pd.DataFrame],
+                    leverage: float,
+                    financing_rate: Union[float, pd.Series] = 0.0,
+                    periods_per_year: int = None
+                    ) -> Union[pd.Series, pd.DataFrame]:
+    """Recover unlevered asset-level returns from levered portfolio returns.
+
+    Inverts the standard constant-leverage identity:
+
+        r_portfolio = (1 + L) * r_asset - L * r_financing
+
+    to recover:
+
+        r_asset = (r_portfolio + L * r_financing) / (1 + L)
+
+    Useful for comparing levered vehicles (BDCs, levered ETFs like TQQQ, levered
+    loan funds) to their unlevered analogues on a common-risk basis.
 
     Args:
-        prices: Price time series
-        method: Fill method ('ffill', 'bfill', or None)
+        returns: Period returns of the levered portfolio (Series or DataFrame).
+        leverage: Leverage ratio L (debt / equity). For a 1.5x levered fund pass 0.5;
+            for a 3x ETF pass 2.0; for the typical BDC at 1.0x debt-to-equity pass 1.0.
+        financing_rate: Annualised financing rate. Pass a float for constant cost
+            (e.g. risk-free rate as a crude proxy), or a Series indexed on the same
+            frequency as returns for time-varying financing (recommended for accuracy).
+            Default 0.0 ignores financing — only correct if the portfolio earns the
+            financing rate on its borrowed capital, which is rarely the case.
+        periods_per_year: Annualisation factor used to convert the financing rate
+            to per-period. If None, inferred from the index frequency.
 
     Returns:
-        Price series with gaps filled between first and last valid observations
+        De-levered returns matching the input shape.
+
+    Note:
+        This assumes constant leverage and a single-tier financing structure. Real
+        BDCs and levered funds have time-varying leverage, multiple debt tranches at
+        different rates, and credit spreads above the risk-free rate. For a precise
+        treatment, use the realised interest expense from filings rather than this
+        approximation.
+
+    Example:
+        >>> # De-lever OCSL using its actual weighted average debt rate of 6.1%
+        >>> ocsl_unlev = delever_returns(ocsl_returns, leverage=1.07,
+        ...                              financing_rate=0.061)
     """
-    is_series_out = False
-    if isinstance(prices, pd.Series):
-        is_series_out = True
-        prices = prices.to_frame()
+    if periods_per_year is None:
+        periods_per_year = int(round(infer_annualisation_factor_from_df(
+            returns if isinstance(returns, pd.DataFrame) else returns.to_frame()
+        )))
 
-    # Get first and last valid dates for each column
-    first_date = dfo.get_nonnan_index(df=prices, position='first')
-    last_date = dfo.get_nonnan_index(df=prices, position='last')
+    # Convert financing rate to per-period
+    if isinstance(financing_rate, pd.Series):
+        # align to returns index, forward-fill to handle missing observations
+        rf_per_period = financing_rate.reindex(returns.index, method='ffill') / periods_per_year
+    else:
+        rf_per_period = float(financing_rate) / periods_per_year
 
-    # Fill only between valid date ranges
-    good_parts = []
-    for idx, column in enumerate(prices.columns):
-        good_price = prices.loc[first_date[idx]:last_date[idx], column]
-        if method is not None:
-            good_price = good_price.infer_objects(copy=False).ffill()
-        good_parts.append(good_price)
+    return (returns + leverage * rf_per_period) / (1.0 + leverage)
 
-    bfilled_data = pd.concat(good_parts, axis=1)
-    if bfilled_data.index[0] > prices.index[0]:
-        bfilled_data = bfilled_data.reindex(index=prices.index)
 
-    if is_series_out:
-        bfilled_data = bfilled_data.iloc[:, 0]
-    return bfilled_data
+def lever_returns(returns: Union[pd.Series, pd.DataFrame],
+                  leverage: float,
+                  financing_rate: Union[float, pd.Series] = 0.0,
+                  periods_per_year: int = None
+                  ) -> Union[pd.Series, pd.DataFrame]:
+    """Apply constant leverage to an unlevered asset return series.
+
+    Forward direction of ``delever_returns``:
+
+        r_portfolio = (1 + L) * r_asset - L * r_financing
+
+    Useful for stress-testing unlevered strategies under hypothetical leverage,
+    or for comparing managed-account performance against a levered benchmark.
+
+    Args:
+        returns: Period returns of the unlevered asset (Series or DataFrame).
+        leverage: Leverage ratio L (debt / equity).
+        financing_rate: Annualised financing rate (float or Series).
+        periods_per_year: Annualisation factor. If None, inferred from index.
+
+    Returns:
+        Levered returns matching the input shape.
+
+    Example:
+        >>> # Show what GCF would look like at 1x leverage with BDC-like financing
+        >>> gcf_levered = lever_returns(gcf_returns, leverage=1.0,
+        ...                             financing_rate=0.061)
+    """
+    if periods_per_year is None:
+        periods_per_year = int(round(infer_annualisation_factor_from_df(
+            returns if isinstance(returns, pd.DataFrame) else returns.to_frame()
+        )))
+
+    if isinstance(financing_rate, pd.Series):
+        rf_per_period = financing_rate.reindex(returns.index, method='ffill') / periods_per_year
+    else:
+        rf_per_period = float(financing_rate) / periods_per_year
+
+    return (1.0 + leverage) * returns - leverage * rf_per_period
+
+
+def implied_leverage(levered_returns: Union[pd.Series, pd.DataFrame],
+                     unlevered_returns: pd.Series,
+                     ) -> Union[float, pd.Series]:
+    """Estimate the implicit leverage ratio between two return series via OLS.
+
+    Regresses levered returns on unlevered returns and extracts the slope, which
+    under the constant-leverage model equals (1 + L). Useful for inferring the
+    effective leverage of a vehicle when not explicitly disclosed.
+
+    Args:
+        levered_returns: Returns of the levered vehicle (Series or DataFrame).
+        unlevered_returns: Returns of the unlevered analogue (Series).
+
+    Returns:
+        Implied leverage ratio L = slope - 1. For Series input, returns a float;
+        for DataFrame input, returns a Series indexed by column name.
+
+    Note:
+        The estimate is contaminated by any non-leverage differences between the
+        two vehicles (security selection, sector tilts, financing spread). Use
+        with caution and only when both vehicles target the same underlying exposure.
+
+    Example:
+        >>> # Estimate OCSL's implied leverage vs Oaktree GCF
+        >>> L = implied_leverage(ocsl_returns, gcf_returns)
+        >>> print(f"Implied leverage: {L:.2f}x")
+    """
+    if isinstance(levered_returns, pd.Series):
+        joint = pd.concat([levered_returns, unlevered_returns], axis=1).dropna()
+        joint.columns = ['y', 'x']
+        if len(joint) < 10:
+            return np.nan
+        slope = np.cov(joint['x'], joint['y'], ddof=1)[0, 1] / np.var(joint['x'], ddof=1)
+        return float(slope - 1.0)
+
+    if isinstance(levered_returns, pd.DataFrame):
+        return pd.Series(
+            {col: implied_leverage(levered_returns[col], unlevered_returns)
+             for col in levered_returns.columns},
+            name='implied_leverage',
+        )
+
+    raise TypeError(f"levered_returns must be Series or DataFrame, got {type(levered_returns)}")
+
+
+def to_quarterly_returns(returns: Union[pd.Series, pd.DataFrame]) -> Union[pd.Series, pd.DataFrame]:
+    """Compound returns to quarter-end via NAV round-trip.
+
+    Masks any trailing partial quarter — i.e., a quarter whose end-of-quarter
+    date falls in a calendar month later than the input's last observed
+    month. This matters at the current quarter boundary where monthly-
+    reporting funds have posted Jan/Feb returns but not yet the full Q1 —
+    without this drop, the resample would forward-fill a 2-month return as
+    if it were a 3-month return.
+
+    The completeness check uses calendar months, not exact QE timestamps, so
+    weekly (W-FRI) and business-month-end series compound correctly even
+    though their stamps don't land on calendar QE. (A previous implementation
+    used ``returns.reindex(QE).notna()``, which silently masked the entire
+    output for any input whose stamps did not align with calendar QE.)
+
+    Used uniformly across all funds for schema consistency; for series that
+    are already quarterly, this is effectively identity (single-obs quarters
+    compound to themselves).
+    """
+    q_returns = to_returns(returns_to_nav(returns), freq='QE')
+
+    # Per column, find the last observed month-end. A quarter ending at QE
+    # is complete iff the input has at least one non-NaN observation in
+    # that quarter's last calendar month — equivalently,
+    # QE <= (last_dt rounded forward to month-end).
+    def _last_complete_month_end(s):
+        clean = s.dropna()
+        if clean.empty:
+            return None
+        return clean.index.max() + pd.offsets.MonthEnd(0)
+
+    if isinstance(returns, pd.Series):
+        last_me = _last_complete_month_end(returns)
+        if last_me is None:
+            q_returns[:] = float('nan')
+        else:
+            q_returns = q_returns.where(q_returns.index <= last_me, other=float('nan'))
+    else:  # DataFrame — compute per column to handle ragged end dates
+        for col in returns.columns:
+            last_me = _last_complete_month_end(returns[col])
+            if last_me is None:
+                q_returns[col] = float('nan')
+            else:
+                q_returns.loc[q_returns.index > last_me, col] = float('nan')
+
+    return q_returns

@@ -16,7 +16,7 @@ from matplotlib.lines import Line2D
 from scipy import stats as stats
 from scipy.stats import skew, kurtosis
 from enum import Enum
-from typing import List, Union, Tuple, Optional, Dict, Any
+from typing import List, Union, Tuple, Optional, Dict
 
 # qis
 import qis.utils.df_ops as dfo
@@ -24,6 +24,15 @@ import qis.utils.df_str as dfs
 import qis.utils.df_freq as dff
 import qis.utils.struct_ops as sop
 from qis.plots.table import ROW_HIGHT, COLUMN_WIDTH, FIRST_COLUMN_WIDTH
+
+# public API of this module: everything else is internal plotting machinery and is
+# imported by its full path, e.g. `from qis.plots.utils import set_spines`
+__all__ = ['TrendLine',        # enum, appears in plot_prices() / plot_prices_2ax() signatures
+           'LastLabel',        # enum, appears in plot_time_series() signature
+           'LegendStats',      # enum, appears in plot_bars() / plot_histogram() signatures
+           'set_suptitle'      # figure title helper, used across qis, optimalportfolios, rosaa
+           ]
+
 
 
 class FixedColors(Enum):
@@ -1129,7 +1138,7 @@ def get_legend_lines(data: Union[pd.DataFrame, pd.Series],
             else:
                 total = np.nansum(column_data)
             legend_lines.append(f"{column}: total={var_format.format(total)}")
-    
+
     elif legend_stats == LegendStats.AVG_MIN_MAX_LAST:
         legend_lines = []
         for column in data.columns:
@@ -1167,7 +1176,7 @@ def get_legend_lines(data: Union[pd.DataFrame, pd.Series],
 
             legend_lines.append(f"{column}: first={var_format.format(first)}, min={var_format.format(min)}, "
                                 f"max={var_format.format(max)}, last={var_format.format(last)}")
-        
+
     else:
         raise TypeError(f"{legend_stats} not implemented")
 
@@ -1380,7 +1389,13 @@ def compute_heatmap_colors(a: np.ndarray,
         a[max_idx] = upper
 
     diffs = upper - lower
-    scaler = np.reciprocal(diffs, where=np.greater(diffs, 0.0))
+    # NumPy 2.x: explicit out= so masked positions (diffs<=0) are deterministic nan,
+    # which the subsequent np.isfinite check then filters out.
+    scaler = np.reciprocal(
+        diffs,
+        out=np.full_like(diffs, np.nan, dtype=float),
+        where=np.greater(diffs, 0.0),
+    )
     cond = np.logical_and(np.isfinite(scaler), np.isfinite(scaler))
     z = alpha*np.where(cond, scaler * (a - lower), np.nan)
 
@@ -1581,7 +1596,7 @@ def run_local_test(local_test: LocalTests):
         print(create_dummy_line())
 
     elif local_test == LocalTests.LEGEND_LINES:
-        from qis.test_data import load_etf_data
+        from qis.tests.price_data_test import load_etf_data
         prices = load_etf_data().dropna()
 
         for legend_stats in LegendStats:

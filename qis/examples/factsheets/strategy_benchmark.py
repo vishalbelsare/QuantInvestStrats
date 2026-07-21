@@ -1,6 +1,11 @@
 """
-example of using strategy construction and reporting vs benchmark
-for implementation see portfolio.report.strategy_factsheet
+Strategy-vs-benchmark factsheet using ``generate_strategy_benchmark_factsheet_plt``.
+
+Builds a vol-parity strategy with a rolling-EWMA covariance estimator and
+compares it to a 60/40 benchmark. Shows attribution, tracking error,
+regime-conditional stats, and active risk decomposition.
+
+Implementation reference: ``qis.portfolio.reports.strategy_factsheet``.
 """
 # packages
 import pandas as pd
@@ -17,7 +22,7 @@ from qis.portfolio.reports.config import fetch_default_report_kwargs
 from qis.portfolio.reports.strategy_benchmark_factsheet import (generate_strategy_benchmark_factsheet_plt,
                                                                 generate_strategy_benchmark_active_perf_plt,
                                                                 generate_performance_attribution_report)
-from qis.test_data import load_etf_data
+from qis.tests.price_data_test import load_etf_data
 
 
 def fetch_universe_data(live_prices: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
@@ -57,7 +62,7 @@ def generate_volparity_multiportfolio(prices: pd.DataFrame,
     ra_returns, weights, ewm_vol = qis.compute_ra_returns(returns=qis.to_returns(prices=prices, is_log_returns=True),
                                                           span=span,
                                                           vol_target=vol_target)
-    weights = weights.divide(weights.sum(1), axis=0)
+    weights = weights.divide(weights.sum(axis=1), axis=0)
 
     if time_period is not None:
         weights = time_period.locate(weights)
@@ -115,10 +120,10 @@ def run_local_test(local_test: LocalTests):
                                                          add_brinson_attribution=pnl_attribution,
                                                          add_exposures_pnl_attribution=pnl_attribution,
                                                          add_exposures_comp=pnl_attribution,
-                                                         add_strategy_factsheet=False,  # for strategy factsheet
+                                                         add_strategy_factsheet=True,  # for strategy factsheet
                                                          add_grouped_exposures=False,  # for strategy factsheet
                                                          add_grouped_cum_pnl=False,  # for strategy factsheet
-                                                         is_grouped=True,
+                                                         is_grouped=False,
                                                          add_joint_instrument_history_report=False,
                                                          **fetch_default_report_kwargs(time_period=time_period,
                                                                                        add_rates_data=True))

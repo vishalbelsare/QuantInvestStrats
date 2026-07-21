@@ -2,17 +2,16 @@
 pieplot
 """
 # packages
+import warnings
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
-from typing import Optional, List
-from enum import Enum
+from typing import Optional, List, Union
 
 # qis
 import qis.plots.utils as put
 
 
-def plot_pie(df: [pd.Series, pd.DataFrame],
+def plot_pie(df: Union[pd.Series, pd.DataFrame],
              y_column: str = None,
              ylabel: str = '',
              title: str = None,
@@ -27,6 +26,10 @@ def plot_pie(df: [pd.Series, pd.DataFrame],
         fig, ax = plt.subplots()
     else:
         fig = None
+
+    if df.empty:
+        warnings.warn('df is empty: no data to plot')
+        return fig
 
     if y_column is None and isinstance(df, pd.DataFrame):
         y_column = df.columns[0]
@@ -44,37 +47,3 @@ def plot_pie(df: [pd.Series, pd.DataFrame],
     ax.set_ylabel(ylabel)
 
     return fig
-
-
-class LocalTests(Enum):
-    PORTFOLIO = 1
-
-
-def run_local_test(local_test: LocalTests):
-    """Run local tests for development and debugging purposes.
-
-    These are integration tests that download real data and generate reports.
-    Use for quick verification during development.
-    """
-
-    if local_test == LocalTests.PORTFOLIO:
-
-        df = pd.DataFrame({'Conservative': [0.5, 0.25, 0.25],
-                           'Balanced': [0.30, 0.30, 0.40],
-                           'Growth': [0.10, 0.40, 0.50]},
-                          index=['Stables', 'Market-neutral', 'Crypto-Beta'])
-        print(df)
-        kwargs = dict(fontsize=8, linewidth=0.5, weight='normal', markersize=1)
-
-        with sns.axes_style("darkgrid"):
-            fig, ax = plt.subplots(1, 1, figsize=(8, 6), tight_layout=True)
-            plot_pie(df=df,
-                     ax=ax,
-                     **kwargs)
-
-    plt.show()
-
-
-if __name__ == '__main__':
-
-    run_local_test(local_test=LocalTests.PORTFOLIO)

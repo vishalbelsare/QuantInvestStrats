@@ -4,7 +4,6 @@ module for computing rolling performance stats
 # packages
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.stats import skew
 from typing import Union, Optional, Tuple
 from enum import Enum
@@ -50,7 +49,7 @@ def compute_rolling_perf_stat(prices: Union[pd.DataFrame, pd.Series],
         title = f"P.a. returns with roll_period={roll_periods}"
     elif rolling_perf_stat == RollingPerfStat.VOL:
         perf_stat = compute_rolling_vols(prices=prices, roll_freq=roll_freq, roll_periods=roll_periods)
-        title = f"Rolling vol with {roll_freq1}-freq and roll_period={roll_periods}"
+        title = f"Rolling Vol with {roll_freq1}-freq and roll_period={roll_periods}"
     elif rolling_perf_stat == RollingPerfStat.SHARPE:
         perf_stat = compute_rolling_sharpes(prices=prices, roll_freq=roll_freq, roll_periods=roll_periods)
         title = f"Rolling Sharpe with {roll_freq1}-freq and roll_period={roll_periods}"
@@ -141,37 +140,3 @@ def compute_rolling_skew(prices: Union[pd.Series, pd.DataFrame],
 def compute_skew(log_returns: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
     skw = skew(log_returns.to_numpy(), axis=0, nan_policy='omit')
     return skw
-
-
-class LocalTests(Enum):
-    ROLLING_STATS = 1
-
-
-def run_local_test(local_test: LocalTests):
-    """Run local tests for development and debugging purposes.
-
-    These are integration tests that download real data and generate reports.
-    Use for quick verification during development.
-    """
-
-    import qis.plots.time_series as pts
-    from qis.test_data import load_etf_data
-    prices = load_etf_data().dropna()
-
-    if local_test == LocalTests.ROLLING_STATS:
-
-        for rolling_perf_stat in RollingPerfStat:
-            stats, title = compute_rolling_perf_stat(prices=prices,
-                                              rolling_perf_stat=rolling_perf_stat,
-                                              roll_freq='W-WED',
-                                              roll_periods=5*52)
-            pts.plot_time_series(df=stats,
-                                 var_format='{:.2f}',
-                                 title=f"{title}")
-
-    plt.show()
-
-
-if __name__ == '__main__':
-
-    run_local_test(local_test=LocalTests.ROLLING_STATS)

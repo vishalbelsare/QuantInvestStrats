@@ -1,3 +1,11 @@
+"""
+Strategy factsheet on a vol-parity multi-asset portfolio.
+
+Builds equal-vol weights across SPY/QQQ/EEM/TLT/IEF/LQD/HYG/GLD via
+``qis.compute_ra_returns`` at a 15% vol target, backtests with
+``qis.backtest_model_portfolio``, and renders the full strategy
+factsheet via ``qis.generate_strategy_factsheet``.
+"""
 import numpy as np
 import pandas as pd
 from typing import Tuple, List
@@ -51,7 +59,7 @@ def generate_volparity_portfolio(prices: pd.DataFrame,
     ra_returns, weights, ewm_vol = qis.compute_ra_returns(returns=qis.to_returns(prices=prices, is_log_returns=True),
                                                           span=span,
                                                           vol_target=vol_target)
-    weights = weights.divide(weights.sum(1), axis=0)
+    weights = weights.divide(weights.sum(axis=1), axis=0)
 
     if time_period is not None:
         weights = time_period.locate(weights)

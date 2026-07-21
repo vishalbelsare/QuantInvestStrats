@@ -7,15 +7,10 @@ from qis.perfstats.config import (
     RA_TABLE_COLUMNS,
     RA_TABLE_COMPACT_COLUMNS,
     RegimeData,
-    RegimeType,
     ReturnTypes,
     SD_PERF_COLUMNS,
     TRE_TABLE_COLUMNS
 )
-
-from qis.perfstats.cond_regression import (ConditionalRegressionColumns,
-                                            estimate_cond_regression,
-                                            get_regime_regression_params)
 
 from qis.perfstats.desc_table import DescTableType, compute_desc_table
 
@@ -54,7 +49,7 @@ from qis.perfstats.regime_classifier import (
 )
 
 from qis.perfstats.returns import (
-    adjust_navs_to_portfolio_pa,
+    adjust_component_navs_to_portfolio,
     compute_excess_returns,
     compute_excess_return_navs,
     compute_net_return_ex_perf_man_fees,
@@ -79,18 +74,23 @@ from qis.perfstats.returns import (
     prices_to_scaled_nav,
     to_total_returns,
     to_zero_first_nonnan_returns,
-    df_price_ffill_between_nans
+    delever_returns,
+    lever_returns,
+    implied_leverage,
+    to_quarterly_returns
 )
 
 from qis.perfstats.timeseries_bfill import (
     interpolate_infrequent_returns,
     append_time_series,
-    bfill_timeseries,
-    df_fill_first_nan_by_cross_median,
-    df_price_fill_first_nan_by_cross_median,
-    replace_nan_by_median,
-    df_ffill_negatives
+    bfill_timeseries
 )
 
-from qis.perfstats.fx_ops import (get_aligned_fx_spots,
-                                  compute_futures_fx_adjusted_returns)
+from qis.perfstats.signal_diagnostics import (
+    SignalDiagnosticsColumns,
+    SignalDiagnosticsResult,
+    compute_per_asset_betas,
+    estimate_signal_diagnostics,
+    compute_ic_timeseries,
+    estimate_ic_ir,
+)

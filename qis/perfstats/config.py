@@ -42,28 +42,32 @@ class PerfStat(ColVar, Enum):
     NUM_OBS = ColVar(name='Num Obs', short_n='Num\nObs', value_type=ValueType.INT)
 
     # computed in compute_pa_return_dict
-    TOTAL_RETURN = ColVar(name='Total', short_n='Total return', value_type=ValueType.PERCT0)
-    PA_RETURN = ColVar(name='P.a. return', short='P.a.', short_n='P.a.\nreturn', value_type=ValueType.PERCT)
-    AN_LOG_RETURN = ColVar(name='An. log return', short_n='An. log-return', value_type=ValueType.PERCT)
-    AN_LOG_RETURN_EXCESS = ColVar(name='An. log return ex', short_n='An. log-return ex', value_type=ValueType.PERCT)
-    AVG_AN_RETURN = ColVar(name='Avg. An return', short_n='Avg. An return', value_type=ValueType.PERCT)
-    APR = ColVar(name='APR', short_n='APR', value_type=ValueType.PERCT)
-    PA_EXCESS_RETURN = ColVar(name='P.a. excess return', short_n='P.a.\nexcess', value_type=ValueType.PERCT)
+    TOTAL_RETURN = ColVar(name='Total', short_n='Total\nreturn', value_type=ValueType.PERCT0)
     NAV1 = ColVar(name='1$ Invested', short_n='1$ Invested', value_type=ValueType.FLOAT)
     NUM_YEARS = ColVar(name='Num Years', short_n='Num\nYears', value_type=ValueType.FLOAT)
 
+    # base returns for sharpe
+    PA_RETURN = ColVar(name='P.a. return', short='P.a.', short_n='P.a.\nreturn', value_type=ValueType.PERCT)
+    PA_EXCESS_RETURN = ColVar(name='P.a. excess return', short_n='P.a.\nexcess', value_type=ValueType.PERCT)
+    AN_LOG_RETURN = ColVar(name='An. log return', short_n='An. log\nreturn', value_type=ValueType.PERCT)
+    AN_LOG_EXCESS_RETURN = ColVar(name='An. log return ex', short_n='An ex\nlog-return', value_type=ValueType.PERCT)
+    AVG_LOG_RETURN = ColVar(name='AvgLogReturn', short_n='AvgReturn', value_type=ValueType.PERCT)
+    AN_ARITH_RETURN = ColVar(name='An. arith return', short_n='An. arith\nreturn', value_type=ValueType.PERCT)  # a * mean(r_m), simple returns at freq_vol
+    AN_ARITH_EXCESS_RETURN = ColVar(name='An. arith excess return', short_n='An. arith\nexcess', value_type=ValueType.PERCT)  # a * mean(r_m - rf_m)
+    AVG_ARITH_RETURN = ColVar(name='Avg Arith Return', short_n='AvgArith\nReturn', value_type=ValueType.PERCT)
+    AVG_ARITH_EXCESS_RETURN = ColVar(name='Avg Arith Ex return', short_n='Avg Arith\nEx return', value_type=ValueType.PERCT)
+
+    # computed charpe ratios
+    SHARPE_RF0 = ColVar(name='Sharpe (rf=0)', short='Sharpe(rf=0)', short_n='Sharpe\n(rf=0)', value_type=ValueType.SHARPE)  # compounded returns with rate = 0.0
+    SHARPE_EXCESS = ColVar(name='Ex Sharpe', short='ExSharpe', short_n='Excess\nSharpe', value_type=ValueType.SHARPE)  # compunded with given rate
+    SHARPE_LOG_AN = ColVar(name='Log Sharpe', short_n='Log\nSharpe', value_type=ValueType.SHARPE)  # log return
+    SHARPE_LOG_EXCESS = ColVar(name='Log Ex Sharpe', short_n='Log Ex\nSharpe', value_type=ValueType.SHARPE)
+    SHARPE_ARITH = ColVar(name='Sharpe Arith', short_n='Sharpe\nArith', value_type=ValueType.SHARPE)  # using avg return
+    SHARPE_ARITH_EXCESS = ColVar(name='Ex Sharpe Arith', short_n='ExSharpe\nArith', value_type=ValueType.SHARPE)  # using avg return
+
+    # risk measures
     VOL = ColVar(name='Vol', short_n='An. vol', value_type=ValueType.PERCT)
     DOWNSIDE_VOL = ColVar(name='DownVol', short_n='DownVol', value_type=ValueType.PERCT)
-    AVG_LOG_RETURN = ColVar(name='AvgLogReturn', short_n='AvgReturn', value_type=ValueType.PERCT)
-    SHARPE_RF0 = ColVar(name='Sharpe (rf=0)', short='Sharpe(rf=0)', short_n='Sharpe\n(rf=0)', value_type=ValueType.SHARPE)  # compounded returns with rate = 0.0
-    SHARPE_EXCESS = ColVar(name='Ex. Sharpe', short='Ex.Sharpe', short_n='Excess\nSharpe', value_type=ValueType.SHARPE)  # compunded with given rate
-    SHARPE_LOG_AN = ColVar(name='An. Log Sharpe', short_n='An. Log Sharpe', value_type=ValueType.SHARPE)  # log return
-    SHARPE_AVG = ColVar(name='Sharpe Avg', short_n='Sharpe Avg', value_type=ValueType.SHARPE)  # using avg return
-    SHARPE_LOG_EXCESS = ColVar(name='Log Sharpe Ex', short_n='Log Sharpe Ex', value_type=ValueType.SHARPE)
-    SHARPE_APR = ColVar(name='APR Sharpe', short_n='APR\nSharpe', value_type=ValueType.SHARPE)
-    MARGINAL_SHARPE = ColVar(name='Marginal Sharpe', short_n='Marginal\nSharpe', value_type=ValueType.SHARPE)
-    MARGINAL_SHARPE_RATIO = ColVar(name='Marginal Sharpe Ratio', short_n='Marginal\nSharpe Ratio', value_type=ValueType.FLOAT)
-
     SORTINO_RATIO = ColVar(name='Sortino', short_n='Sortino', value_type=ValueType.SHARPE)
     CALMAR_RATIO = ColVar(name='Calmar', short_n='Calmar', value_type=ValueType.SHARPE)
 
@@ -174,7 +178,7 @@ RA_TABLE_COMPACT_COLUMNS = (PerfStat.PA_RETURN,
 
 
 TRE_TABLE_COLUMNS = (PerfStat.TOTAL_RETURN,
-                     PerfStat.AVG_AN_RETURN,
+                     PerfStat.AN_ARITH_RETURN,
                      PerfStat.TE,
                      PerfStat.IR,
                      PerfStat.MAX_DD,
@@ -185,6 +189,20 @@ TRE_TABLE_COLUMNS = (PerfStat.TOTAL_RETURN,
                      PerfStat.BEST)
 
 
+class SharpeConvention(Enum):
+    """
+    convention for the Sharpe ratio numerator, see qis/docs/sharpe_conventions.md
+    PA = compound annual excess return / annualized vol (reporting default, BarclayHedge tradition)
+    ARITHMETIC = sqrt(af) * mean / std of periodic simple excess returns (Sharpe 1994 plug-in,
+                 the convention of the Sharpe-inference literature; regime decomposition is
+                 exactly additive in this convention)
+    LOG = sqrt(af) * mean / std of periodic log excess returns
+    """
+    PA = 1
+    ARITHMETIC = 2
+    LOG = 3
+
+
 @dataclass
 class PerfParams:
     """
@@ -192,11 +210,12 @@ class PerfParams:
     """
     freq: str = None  # if pass this will be default for all
     freq_vol: str = 'ME'  # volatility of Sharpe
-    freq_skeweness: str = 'ME'  # volatility of skeweness
+    freq_skewness: str = 'ME'  # volatility of skeweness
     freq_drawdown: str = 'D'
     freq_reg: str = 'QE'  # for quadratic/linear regressions
     freq_excess_return: str = 'ME'
     return_type: ReturnTypes = ReturnTypes.LOG  # for vol computation
+    sharpe_convention: SharpeConvention = SharpeConvention.PA  # PA keeps all existing outputs byte-stable
     rates_data: Optional[pd.Series] = None  # to compute EXCESS returns
 
     def __post_init__(self):
@@ -237,23 +256,3 @@ class PerfParams:
                                return_type=return_type or self.return_type,
                                rates_data=rates_data if rates_data is not None else self.rates_data)
         return this_copy
-
-
-class LocalTests(Enum):
-    PERFORMANCE_STAT = 1
-
-
-def run_local_test(local_test: LocalTests):
-    """Run local tests for development and debugging purposes.
-
-    These are integration tests that download real data and generate reports.
-    Use for quick verification during development.
-    """
-
-    if local_test == LocalTests.PERFORMANCE_STAT:
-        print(PerfStat.TOTAL_RETURN)
-
-
-if __name__ == '__main__':
-
-    run_local_test(local_test=LocalTests.PERFORMANCE_STAT)

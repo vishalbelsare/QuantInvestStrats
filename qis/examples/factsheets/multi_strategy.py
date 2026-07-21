@@ -1,5 +1,10 @@
 """
-multi strategy backtest is generated using same strategy with a set of different model parameters
+Multi-strategy factsheet from a parameter sweep of a single strategy.
+
+Backtests the same vol-parity strategy across several spans, wraps the
+results into a ``MultiPortfolioData``, and renders
+``qis.generate_multi_portfolio_factsheet`` to compare strategies
+side by side. Useful for illustrating sensitivity to a single parameter.
 """
 # packages
 import pandas as pd
@@ -47,7 +52,7 @@ def generate_volparity_multi_strategy(prices: pd.DataFrame,
     portfolio_datas = []
     for span in spans:
         ra_returns, weights, ewm_vol = qis.compute_ra_returns(returns=returns, span=span, vol_target=vol_target)
-        weights = weights.divide(weights.sum(1), axis=0)
+        weights = weights.divide(weights.sum(axis=1), axis=0)
         portfolio_data = qis.backtest_model_portfolio(prices=prices,
                                                       weights=time_period.locate(weights),
                                                       rebalancing_costs=rebalancing_costs,

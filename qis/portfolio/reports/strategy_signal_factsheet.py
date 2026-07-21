@@ -11,6 +11,8 @@ import qis as qis
 from qis import TimePeriod, BenchmarkReturnsQuantilesRegime
 from qis.portfolio.portfolio_data import PortfolioData
 from qis.portfolio.signal_data import StrategySignalData
+from qis.plots.utils import TrendLine, set_y_limits
+from qis.utils.df_str import date_to_str
 
 
 def generate_weight_change_report(portfolio_data: PortfolioData,
@@ -48,7 +50,7 @@ def generate_weight_change_report(portfolio_data: PortfolioData,
             group_preds[group] = df_ac.copy()
             if group_deflator is not None and group in group_deflator.keys():
                 df_ac *= group_deflator[group]
-            agg_preds[group] = df_ac.sum(0)
+            agg_preds[group] = df_ac.sum(axis=0)
         agg_preds = pd.DataFrame.from_dict(agg_preds, orient='index')
 
         post_agg = ''
@@ -77,7 +79,7 @@ def generate_weight_change_report(portfolio_data: PortfolioData,
                 print(f"{fitted_models_g[group].summary()}")
             qis.plot_bars(df=df_ac,
                           stacked=True,
-                          totals=df_ac.sum(1).to_list(),
+                          totals=df_ac.sum(axis=1).to_list(),
                           annotate_totals=False,
                           title=f"{group}",
                           ncols=len(df_ac.columns)//2,
@@ -106,14 +108,14 @@ def generate_current_signal_report(portfolio_data: PortfolioData,
                                 figsize=figsize, tight_layout=True)
         axs = qis.to_flat_list(axs)
         qis.set_suptitle(fig, title=(f"{portfolio_data.ticker} Signals for period "
-                                     f"{qis.date_to_str(strategy_signal_data.signal.index[-21])} and "
-                                     f"{qis.date_to_str(strategy_signal_data.signal.index[-1])}; "
+                                     f"{date_to_str(strategy_signal_data.signal.index[-21])} and "
+                                     f"{date_to_str(strategy_signal_data.signal.index[-1])}; "
                                      f"min, max = [{y_limits[0]:0.2f}, {y_limits[1]:0.2f}]"),
                          fontweight="bold", fontsize=8, color='blue')
 
     for idx, (group, df_ac) in enumerate(agg_by_group_dict.items()):
         if y_limits is not None:
-            qis.set_y_limits(ax=axs[idx], y_limits=y_limits)
+            set_y_limits(ax=axs[idx], y_limits=y_limits)
         qis.plot_bars(df=df_ac,
                       stacked=False,
                       title=f"{group}",
@@ -178,7 +180,7 @@ def generate_strategy_signal_factsheet_by_instrument(strategy_signal_data: Strat
                 df1 = df
                 title1 = key
                 qis.plot_time_series(df=df,
-                                     # trend_line=qis.TrendLine.ZERO_SHADOWS,
+                                     # trend_line=TrendLine.ZERO_SHADOWS,
                                      var_format=var_formats[idx],
                                      title=key,
                                      legend_stats=qis.LegendStats.AVG_MIN_MAX_LAST,
@@ -189,7 +191,7 @@ def generate_strategy_signal_factsheet_by_instrument(strategy_signal_data: Strat
                                        regime_classifier=regime_classifier)
 
             qis.plot_histogram(df=df1,
-                               # trend_line=qis.TrendLine.ZERO_SHADOWS,
+                               # trend_line=TrendLine.ZERO_SHADOWS,
                                var_format=var_formats[idx],
                                title=title1,
                                legend_stats=qis.LegendStats.AVG_MIN_MAX_LAST,

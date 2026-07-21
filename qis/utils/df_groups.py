@@ -5,7 +5,6 @@ implement group by operations on df
 import numpy as np
 import pandas as pd
 from typing import Union, List, Dict, Callable, Optional
-from enum import Enum
 
 # qis
 import qis.utils.struct_ops as sop
@@ -114,7 +113,7 @@ def agg_df_by_groups_ax1(df: pd.DataFrame,
 def agg_df_by_groups(df: pd.DataFrame,
                      group_data: pd.Series,
                      group: str = None,
-                     agg_func: Callable[[pd.DataFrame], pd.Series] = dfa.nansum,
+                     agg_func: Callable[[pd.DataFrame], pd.Series] = dfa.df_nansum,
                      total_column: Union[str, None] = None,
                      is_total_first: bool = True,
                      group_order: List[str] = None,
@@ -163,7 +162,7 @@ def agg_df_by_groups(df: pd.DataFrame,
 def agg_df_by_group_with_avg(df: pd.DataFrame,
                              group_data: pd.Series,
                              group_order: List[str] = None,
-                             agg_func: Callable = dfa.nanmean,
+                             agg_func: Callable = dfa.df_nanmean,
                              agg_func_id: str = 'mean',
                              total_column: str = 'Universe mean'
                              ) -> Dict[str, pd.DataFrame]:
@@ -193,7 +192,7 @@ def agg_df_by_group_with_avg(df: pd.DataFrame,
 
 def fill_df_with_group_avg(df: pd.DataFrame,
                            group_data: pd.Series,
-                           agg_func: Callable[[pd.DataFrame], pd.Series] = dfa.nanmean,
+                           agg_func: Callable[[pd.DataFrame], pd.Series] = dfa.df_nanmean,
                            group_order: List[str] = None
                            ) -> pd.DataFrame:
     """
@@ -263,34 +262,14 @@ def convert_df_column_to_df_by_groups(df: pd.DataFrame,
     return df1
 
 
-class LocalTests(Enum):
-    GROUP = 1
-
-
-def run_local_test(local_test: LocalTests):
-    """Run local tests for development and debugging purposes.
-
-    These are integration tests that download real data and generate reports.
-    Use for quick verification during development.
-    """
-
-    if local_test == LocalTests.GROUP:
-
-        group_data = pd.Series(dict(SPY='Equities', QQQ='Equities', EEM='Equities', TLT='Bonds',
-                                    IEF='Bonds', SHY='Bonds', LQD='Credit', HYG='HighYield', GLD='Gold'))
-
-        group_dict = get_group_dict(group_data=group_data)
-        print(f"group_dict=\n{group_dict}")
-
-        group_dict_ordered = get_group_dict(group_data=group_data, group_order=list(group_data.unique()))
-        print(f"group_dict_ordered=\n{group_dict_ordered}")
-
-        group_dict_subset = get_group_dict(group_data=group_data,
-                                           index_data=group_data.index[:5].to_list(),
-                                           group_order=list(group_data.unique()))
-        print(f"group_dict_subset=\n{group_dict_subset}")
-
-
-if __name__ == '__main__':
-
-    run_local_test(local_test=LocalTests.GROUP)
+def flatten_group_attribution(group_attribs: Dict[str, Dict[str, pd.DataFrame]]) -> Dict[str, pd.DataFrame]:
+    """Flatten nested group attribution into one DataFrame per group."""
+    result = {}
+    for group_name, metrics_dict in group_attribs.items():
+        dfs = []
+        for metric_name, df in metrics_dict.items():
+            df_copy = df.copy()
+            df_copy.insert(0, 'metric', metric_name)
+            dfs.append(df_copy)
+        result[group_name] = pd.concat(dfs, axis=0)
+    return result

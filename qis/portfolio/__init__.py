@@ -55,6 +55,8 @@ from qis.portfolio.reports.strategy_benchmark_tre_factsheet import (weights_trac
 
 from qis.portfolio.reports.multi_strategy_factsheet import generate_multi_portfolio_factsheet
 
+from qis.portfolio.reports.factsheet_facade import factsheet
+
 from qis.portfolio.reports.strategy_signal_factsheet import (generate_weight_change_report,
                                                              generate_current_signal_report,
                                                              generate_strategy_signal_factsheet_by_instrument)
@@ -63,5 +65,5 @@ from qis.portfolio.reports.overlays_smart_diversification import (SmartDiversifi
                                                                   create_overlay_portfolio_curve)
 
 
-# disable requirements for pyblogs
-# from qis.portfolio.reports.multi_strategy_factseet_pybloqs import generate_multi_portfolio_factsheet_with_pyblogs
+# disable requirements for pybloqs
+# from qis.portfolio.reports.multi_strategy_factseet_pybloqs import generate_multi_portfolio_factsheet_with_pybloqs

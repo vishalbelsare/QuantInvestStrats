@@ -2,13 +2,13 @@
 plot histogram 2d
 """
 # packages
+import warnings
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy import stats
 from typing import Optional
-from enum import Enum
 
 # qis
 import qis.plots.utils as put
@@ -28,13 +28,17 @@ def plot_histplot2d(df: pd.DataFrame,
                     **kwargs
                     ) -> plt.Figure:
 
-    if len(df.columns) != 2:
-        raise ValueError(f"should be 2 columns")
-
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
     else:
         fig = None
+
+    if df.empty:
+        warnings.warn('df is empty: no data to plot')
+        return fig
+
+    if len(df.columns) != 2:
+        raise ValueError(f"should be 2 columns")
 
     if a_min is not None or a_max is not None:
         df = np.clip(df, a_min=a_min, a_max=a_max)
@@ -67,32 +71,3 @@ def plot_histplot2d(df: pd.DataFrame,
         ax.set_title(title, fontsize=fontsize, **kwargs)
 
     return fig
-
-
-class LocalTests(Enum):
-    TEST = 1
-
-
-def run_local_test(local_test: LocalTests):
-    """Run local tests for development and debugging purposes.
-
-    These are integration tests that download real data and generate reports.
-    Use for quick verification during development.
-    """
-
-    if local_test == LocalTests.TEST:
-        np.random.seed(1)
-        n_instruments = 1000
-        exposures_nm = np.random.normal(0.0, 1.0, size=(n_instruments, 2))
-        data = pd.DataFrame(data=exposures_nm, columns=[f"id{n+1}" for n in range(2)])
-
-        fig, ax = plt.subplots(1, 1, figsize=(3.9, 3.4), tight_layout=True)
-        global_kwargs = dict(fontsize=6, linewidth=0.5, weight='normal', first_color_fixed=True)
-        plot_histplot2d(df=data, ax=ax, **global_kwargs)
-
-    plt.show()
-
-
-if __name__ == '__main__':
-
-    run_local_test(local_test=LocalTests.TEST)

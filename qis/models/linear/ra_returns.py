@@ -72,6 +72,25 @@ def compute_ewm_long_short_filtered_ra_returns(returns: pd.DataFrame,
                                                weight_lag: Optional[int] = 1,
                                                mean_adj_type: ewm.MeanAdjType = ewm.MeanAdjType.NONE
                                                ) -> pd.DataFrame:
+    """
+    Vol-normalise ``returns`` (EWM vol over ``vol_span``) then apply the long/short
+    EWM band-pass filter (ewm.compute_ewm_long_short_filter).
+
+    Every span drives an EWM decay ``lambda = 1 - 2/(span + 1)`` and must be ``>= 1``:
+    ``span = 1`` gives ``lambda = 0`` (an unsmoothed pass-through), while ``span < 1``
+    gives ``lambda < 0`` (a sign-alternating recursion, not a smoother) and for the
+    vol leg can yield a negative variance and hence NaN vol. When ``short_span`` is
+    given it must additionally be strictly less than ``long_span`` (equal spans
+    collapse the filter unit-variance normaliser to 0 -> division by zero).
+
+    long_span/short_span are checked with ewm._validate_long_short_spans, the same
+    routine compute_ewm_long_short_filter uses, so the contract is identical.
+    """
+    if vol_span is not None and np.any(np.asarray(vol_span, dtype=float) < 1.0):
+        raise ValueError(f"compute_ewm_long_short_filtered_ra_returns: vol_span must be >= 1 "
+                         f"(lambda = 1 - 2/(span+1) is negative below span 1); got vol_span={vol_span}")
+    ewm._validate_long_short_spans(long_span=long_span, short_span=short_span)
+
     if vol_span is not None:
         ra_returns, _, _ = compute_ra_returns(returns=returns,
                                               span=vol_span,
@@ -128,7 +147,11 @@ def map_signal_to_weight(signals: pd.DataFrame,
         scale_positive = 1.5625 * scale / np.log(tail_level / (tail_level - slope_right))
         s_negative = - tail_level * (1.0 - np.exp(-np.square(x - loc) / scale_negative))
         s_positive = tail_level * (1.0 - np.exp(-np.square(x - loc) / scale_positive))
-        weight = np.where(np.less(x, loc, where=np.isfinite(x)), s_negative, s_positive)
+        # NumPy 2.x: comparison with `where=` needs `out=` so masked positions are False,
+        # causing np.where to select s_positive (the safer default for non-finite x).
+        finite_mask = np.isfinite(x)
+        less_mask = np.less(x, loc, out=np.zeros_like(finite_mask, dtype=bool), where=finite_mask)
+        weight = np.where(less_mask, s_negative, s_positive)
 
         if tail_decay_right is not None and tail_decay_left is not None:  # take min(loc,0.0) and max(loc, 0.0)
             if isinstance(tail_decay_right, np.ndarray) and tail_decay_right.shape[0] != x.shape[1]:
@@ -347,7 +370,7 @@ def run_local_test(local_test: LocalTests):
     Use for quick verification during development.
     """
 
-    from qis.test_data import load_etf_data
+    from qis.tests.price_data_test import load_etf_data
     prices = load_etf_data().dropna()
     returns = prices.pct_change()
 

@@ -49,8 +49,6 @@ from qis.models.linear.ewm import (
     compute_one_factor_ewm_betas,
     compute_roll_mean,
     compute_rolling_mean_adj,
-    set_init_dim1,
-    set_init_dim2,
     compute_ewm_covar_newey_west
 )
 
@@ -84,9 +82,9 @@ from qis.models.linear.ra_returns import(
     get_paired_rareturns_signals
 )
 
-from qis.models.stats.bootstrap import (
-    BootsrapOutput,
-    BootsrapType,
+from qis.models.bootstrap.bootstrap_numba import (
+    BootstrapOutput,
+    BootstrapType,
     bootstrap_ar_process,
     bootstrap_data,
     bootstrap_price_data,
@@ -104,7 +102,6 @@ from qis.models.stats.ohlc_vol import (
 from qis.models.linear.ewm_winsor_outliers import (
     ReplacementType,
     OutlierPolicy,
-    OutlierPolicyTypes,
     filter_outliers,
     ewm_insample_winsorising,
     compute_ewm_score
@@ -112,3 +109,51 @@ from qis.models.linear.ewm_winsor_outliers import (
 
 from qis.models.stats.rolling_stats import (RollingPerfStat,
                                             compute_rolling_perf_stat)
+
+from qis.models.unsmoothing.ar_lag import (
+    adjust_returns_with_ar,
+    compute_ar_unsmoothed_prices,
+)
+
+from qis.models.unsmoothing.dimson_beta import estimate_dimson_beta
+
+from qis.models.unsmoothing.factor_lag import adjust_returns_with_factor_lag
+
+from qis.models.unsmoothing.joint_lag import adjust_returns_with_joint_unsmoothing
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

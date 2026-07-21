@@ -13,9 +13,9 @@ import qis as qis
 from qis import PerfParams, PerfStat, RegimeData, BenchmarkReturnsQuantilesRegime, TimePeriod, RollingPerfStat
 import qis.utils.struct_ops as sop
 import qis.utils.df_groups as dfg
+from qis.utils.annualisation import infer_data_frequency_label
 import qis.perfstats.returns as ret
 import qis.perfstats.perf_stats as rpt
-import qis.perfstats.regime_classifier as rcl
 # plots
 import qis.plots.time_series as pts
 import qis.plots.derived.prices as ppd
@@ -24,6 +24,8 @@ import qis.plots.derived.perf_table as ppt
 import qis.plots.derived.returns_scatter as prs
 import qis.plots.derived.drawdowns as cdr
 from qis.portfolio.portfolio_data import PortfolioData, AttributionMetric
+from qis.utils.struct_ops import merge_lists_unique
+
 
 # default perf params
 PERF_PARAMS = PerfParams(freq='W-WED')
@@ -154,8 +156,8 @@ class MultiPortfolioData:
         benchmark_weights = self.portfolio_datas[benchmark_idx].get_weights(time_period=time_period, freq=freq,
                                                                             is_input_weights=is_input_weights,
                                                                             is_grouped=is_grouped)
-        tickers_union = qis.merge_lists_unique(list1=strategy_weights.columns.to_list(),
-                                               list2=benchmark_weights.columns.to_list())
+        tickers_union = merge_lists_unique(list1=strategy_weights.columns.to_list(),
+                                           list2=benchmark_weights.columns.to_list())
         # replace with ac order of benchmark
         if is_grouped and self.portfolio_datas[benchmark_idx].group_order is not None:
             tickers_union = self.portfolio_datas[benchmark_idx].group_order
@@ -180,8 +182,8 @@ class MultiPortfolioData:
                                                                               freq=freq_turnover,
                                                                               roll_period=turnover_rolling_period,
                                                                               add_total=False, is_grouped=is_grouped)
-        tickers_union = qis.merge_lists_unique(list1=strategy_turnover.columns.to_list(),
-                                               list2=benchmark_turnover.columns.to_list())
+        tickers_union = merge_lists_unique(list1=strategy_turnover.columns.to_list(),
+                                           list2=benchmark_turnover.columns.to_list())
         # replace with ac order of benchmark
         if is_grouped and self.portfolio_datas[benchmark_idx].group_order is not None:
             tickers_union = self.portfolio_datas[benchmark_idx].group_order
@@ -257,8 +259,8 @@ class MultiPortfolioData:
         benchmark_pnl = self.portfolio_datas[benchmark_idx].get_attribution_table_by_instrument(time_period=time_period,
                                                                                                 freq=freq)
 
-        tickers_union = qis.merge_lists_unique(list1=strategy_pnl.columns.to_list(),
-                                               list2=benchmark_pnl.columns.to_list())
+        tickers_union = merge_lists_unique(list1=strategy_pnl.columns.to_list(),
+                                           list2=benchmark_pnl.columns.to_list())
         strategy_pnl = strategy_pnl.reindex(columns=tickers_union)
         benchmark_pnl = benchmark_pnl.reindex(columns=tickers_union).reindex(index=strategy_pnl.index)
         pnl_diff = strategy_pnl.subtract(benchmark_pnl)
@@ -282,8 +284,8 @@ class MultiPortfolioData:
         benchmark_ticker = self.portfolio_datas[benchmark_idx].ticker
 
         # compute stats
-        total_strategy_perf = strategy_pnl.cumsum(0).iloc[-1, :].rename(f"{strategy_ticker} total perf")
-        total_benchmark_perf = benchmark_pnl.cumsum(0).iloc[-1, :].rename(f"{benchmark_ticker} total perf")
+        total_strategy_perf = strategy_pnl.cumsum(axis=0).iloc[-1, :].rename(f"{strategy_ticker} total perf")
+        total_benchmark_perf = benchmark_pnl.cumsum(axis=0).iloc[-1, :].rename(f"{benchmark_ticker} total perf")
         total_diff = total_strategy_perf.subtract(total_benchmark_perf).rename(
             f"{strategy_ticker}-{benchmark_ticker} total perf")
 
@@ -291,10 +293,10 @@ class MultiPortfolioData:
 
         tre_table = pd.concat([total_diff, tre,
                                total_strategy_perf, total_benchmark_perf,
-                               annualization_factor * strategy_turnover.mean(0).rename(f"{strategy_ticker} an turnover"),
-                               annualization_factor * benchmark_turnover.mean(0).rename(f"{benchmark_ticker} an turnover"),
-                               annualization_factor * strategy_cost.mean(0).rename(f"{strategy_ticker} an cost"),
-                               annualization_factor * benchmark_cost.mean(0).rename(f"{benchmark_ticker} an cost"),
+                               annualization_factor * strategy_turnover.mean(axis=0).rename(f"{strategy_ticker} an turnover"),
+                               annualization_factor * benchmark_turnover.mean(axis=0).rename(f"{benchmark_ticker} an turnover"),
+                               annualization_factor * strategy_cost.mean(axis=0).rename(f"{strategy_ticker} an cost"),
+                               annualization_factor * benchmark_cost.mean(axis=0).rename(f"{benchmark_ticker} an cost"),
                                ], axis=1)
 
         return tre_table
@@ -364,7 +366,7 @@ class MultiPortfolioData:
                                          roll_periods=sharpe_rolling_window,
                                          legend_stats=legend_stats,
                                          title=sharpe_title,
-                                         trend_line=None,  # qis.TrendLine.ZERO_SHADOWS,
+                                         trend_line=None,
                                          ax=ax,
                                          **kwargs)
 
@@ -421,7 +423,7 @@ class MultiPortfolioData:
             qis.plot_returns_corr_table(prices=prices,
                                         x_rotation=90,
                                         freq=freq,
-                                        title=f'Correlation of {freq} returns',
+                                        title=f'Correlation of {freq}-freq returns',
                                         ax=ax,
                                         **kwargs)
 
@@ -581,10 +583,11 @@ class MultiPortfolioData:
         for portfolio in self.portfolio_datas:
             exposures.append(portfolio.get_weights(time_period=time_period).sum(axis=1).rename(portfolio.nav.name))
         exposures = pd.concat(exposures, axis=1)
+        freq = infer_data_frequency_label(exposures)
         pts.plot_time_series(df=exposures,
                              var_format=var_format,
                              legend_stats=pts.LegendStats.AVG_NONNAN_LAST,
-                             title='Portfolio net exposures',
+                             title=f"Portfolio net exposures ({freq}-freq)" if freq else 'Portfolio net exposures',
                              ax=ax,
                              **kwargs)
         if regime_benchmark is not None:
@@ -679,7 +682,7 @@ class MultiPortfolioData:
                                      freq_turnover=freq_turnover,
                                      is_unit_based_traded_volume=is_unit_based_traded_volume,
                                      time_period=time_period)
-        freq = pd.infer_freq(turnover.index)
+        freq = freq_turnover or pd.infer_freq(turnover.index)
         turnover_title = f"{turnover_rolling_period}-period rolling {freq}-freq Turnover"
         pts.plot_time_series(df=turnover,
                              var_format=var_format,
@@ -709,7 +712,7 @@ class MultiPortfolioData:
         costs = pd.concat(costs, axis=1)
         if time_period is not None:
             costs = time_period.locate(costs)
-        freq = pd.infer_freq(costs.index)
+        freq = freq_cost or pd.infer_freq(costs.index)
         cost_title = cost_title or f"{cost_rolling_period}-period rolling {freq}-freq Costs %"
         pts.plot_time_series(df=costs,
                              var_format=var_format,
@@ -856,7 +859,7 @@ class MultiPortfolioData:
             else:
                 var_format = '{:.2%}'
 
-        title = title or f"Sharpe ratio split to {str(benchmark)} Bear/Normal/Bull {regime_classifier.freq}-freq regimes"
+        title = title or f"Sharpe in {str(benchmark)} Bear/Normal/Bull {regime_classifier.freq}-freq regimes"
         qis.plot_regime_data(regime_classifier=regime_classifier,
                              prices=prices,
                              benchmark=benchmark,

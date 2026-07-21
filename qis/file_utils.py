@@ -17,16 +17,17 @@ import os
 import functools
 import platform
 import time
+import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from os import listdir
 from os.path import isfile, join
-from typing import Dict, List, NamedTuple, Optional, Union, Literal
+from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple, Union, Literal
 from matplotlib.backends.backend_pdf import PdfPages
 from enum import Enum
 
-from qis.local_path import get_paths
+from qis.local_path import get_paths, get_resource_path, get_output_path
 
 
 """"
@@ -53,6 +54,7 @@ class FileTypes(FileData, Enum):
     EPS = FileData(extension='.eps', folder='figures')
     SVG = FileData(extension='.svg', folder='figures')
     CSV = FileData(extension='.csv', folder='csv')
+    CSV_GZ = FileData(extension='.csv.gz', folder='csv')
     FEATHER = FileData(extension='.feather', folder='feather')
     EXCEL = FileData(extension='.xlsx', folder='excel')
     PPTX = FileData(extension='.pptx', folder='pptx')
@@ -61,49 +63,7 @@ class FileTypes(FileData, Enum):
     TXT = FileData(extension='.txt', folder='txt')
     PARQUET = FileData(extension='.parquet', folder='parquet')
     ZIP = FileData(extension='.zip', folder=None)
-
-
-class PathData(NamedTuple):
-    platform: str
-    path: str
-
-
-class ResourcePath(PathData, Enum):
-    """
-    specify window and lynox local paths to read resourse files
-    """
-    WINDOWS = PathData(platform='Windows', path=RESOURCE_PATH)
-    LINUX = PathData(platform='Linux', path=RESOURCE_PATH)
-
-
-class OutputPath(PathData, Enum):
-    """
-    specify window and lynox local paths for outputs
-    """
-    WINDOWS = PathData(platform='Windows', path=OUTPUT_PATH)
-    LINUX = PathData(platform='Linux', path=OUTPUT_PATH)
-
-
-def get_output_path() -> str:
-    """
-    platform dependent output path
-    """
-    run_platform = platform.system()
-    path_data = next((item for item in OutputPath if item.value.platform == run_platform), None)
-    if path_data is None:
-        raise TypeError(f"unknown platform {run_platform}")
-    return path_data.path
-
-
-def get_resource_path() -> str:
-    """
-    platform dependent resourse path
-    """
-    run_platform = platform.system()
-    path_data = next((item for item in ResourcePath if item.value.platform == run_platform), None)
-    if path_data is None:
-        raise TypeError(f"unknown platform {run_platform}")
-    return path_data.path
+    HTML = FileData(extension='.html', folder=None)
 
 
 def join_file_name_parts(parts: List[str]) -> str:
@@ -137,6 +97,10 @@ def get_local_file_path(file_name: Optional[str],
     if local_path in not None and file_name is None and key is not None and file_type is passed: file_path=local_path//key+file_type.value
     if local_path in not None and file_name and key and file_type is passed: file_path=local_path//file_name_key+file_type.value
     """
+
+    # explicit local_path=None falls back to caller's current working directory
+    if local_path is None:
+        local_path = ''
 
     if local_path is not None and folder_name is not None:
         local_path = join(local_path, folder_name)
@@ -187,6 +151,76 @@ def timer(func):
 
 
 """
+Shared helpers for save_* functions
+"""
+
+
+_SHEET_NAME_MAX = 31
+_SHEET_NAME_BAD = "[]:*?/\\"
+
+
+def _coerce_to_df(obj, label: str) -> Optional[pd.DataFrame]:
+    """Coerce Series->DataFrame; warn and return None for unsupported/None inputs."""
+    if obj is None:
+        return None
+    if isinstance(obj, pd.DataFrame):
+        return obj
+    if isinstance(obj, pd.Series):
+        warnings.warn(f"{label!r}: Series converted to DataFrame")
+        return obj.to_frame()
+    warnings.warn(f"{label!r}: unsupported type {type(obj).__name__}; skipped")
+    return None
+
+
+def _sanitize_sheet_name(name, taken: set) -> str:
+    """Make `name` a valid Excel sheet name (<=31 chars, no []:*?/\\, unique)."""
+    s = str(name)
+    for bad in _SHEET_NAME_BAD:
+        s = s.replace(bad, "_")
+    s = s[:_SHEET_NAME_MAX]
+    if s != str(name):
+        warnings.warn(f"Sheet name {name!r} sanitized to {s!r}")
+    if s in taken:
+        base = s[: _SHEET_NAME_MAX - 4]
+        i = 2
+        while f"{base}_{i}" in taken:
+            i += 1
+        new = f"{base}_{i}"
+        warnings.warn(f"Duplicate sheet name {s!r}; using {new!r}")
+        s = new
+    taken.add(s)
+    return s
+
+
+def _iter_named(data, sheet_names) -> Iterable[Tuple[str, object]]:
+    """Yield (raw_name, obj) pairs for any of the accepted input shapes."""
+    if isinstance(data, dict):
+        if sheet_names is not None:
+            warnings.warn("sheet_names ignored for dict input; using dict keys")
+        yield from data.items()
+    elif isinstance(data, list):
+        if sheet_names is None:
+            names = [f"Sheet {i + 1}" for i in range(len(data))]
+        elif isinstance(sheet_names, str):
+            raise TypeError("sheet_names must be a list when data is a list")
+        elif len(sheet_names) < len(data):
+            raise ValueError(
+                f"sheet_names has {len(sheet_names)} entries, data has {len(data)}"
+            )
+        else:
+            names = sheet_names
+        yield from zip(names, data)
+    else:
+        if isinstance(sheet_names, str):
+            name = sheet_names
+        elif isinstance(sheet_names, list) and sheet_names:
+            name = sheet_names[0]
+        else:
+            name = "Sheet1"
+        yield name, data
+
+
+"""
 Pandas to/from Excel core
 """
 
@@ -214,8 +248,6 @@ def save_df_to_excel(data: Union[pd.DataFrame, List[pd.DataFrame], Dict[str, pd.
     mode = w: write new file
     mode = a: append to existing file
     """
-    if mode == 'w':
-        if_sheet_exists = None
     if add_current_date:
         file_name = f"{file_name}_{pd.Timestamp.now().strftime(DATE_FORMAT)}"
 
@@ -225,45 +257,29 @@ def save_df_to_excel(data: Union[pd.DataFrame, List[pd.DataFrame], Dict[str, pd.
                                     folder_name=folder_name,
                                     key=key)
 
-    excel_writer = pd.ExcelWriter(file_path, engine='openpyxl', mode=mode, if_sheet_exists=if_sheet_exists)
-    if isinstance(data, list):  # publish with sheet names
-        if sheet_names is None:
-            sheet_names = [f"Sheet {n+1}" for n, _ in enumerate(data)]
-        for df, name in zip(data, sheet_names):
-            if df is not None:
-                if isinstance(df, pd.DataFrame):
-                    pass
-                elif isinstance(df, pd.Series):
-                    df = df.to_frame()
-                else:
-                    continue
-                df = delocalize_df(df)
-                if transpose:
-                    df = df.T
-                df.to_excel(excel_writer=excel_writer, sheet_name=name)
-    elif isinstance(data, dict):  # publish with sheet names
-        for key, df in data.items():
-            if df is not None and isinstance(df, pd.DataFrame):
-                df = delocalize_df(df)
-                if transpose:
-                    df = df.T
-                df.to_excel(excel_writer=excel_writer, sheet_name=key)
-    else:
-        if data is None:
-            raise ValueError(f"None data")
+    # Resolve + validate everything before opening the writer so we don't leave
+    # a half-written / empty workbook behind on error.
+    taken: set = set()
+    frames: List[Tuple[str, pd.DataFrame]] = []
+    for raw_name, obj in _iter_named(data, sheet_names):
+        df = _coerce_to_df(obj, str(raw_name))
+        if df is None:
+            continue
+        df = delocalize_df(df)
         if transpose:
-            data = data.T
-        data = delocalize_df(data)
-        if sheet_names is not None:
-            if isinstance(sheet_names, str):
-                sheet_name = sheet_names
-            else:
-                sheet_name = sheet_names[0]
-        else:
-            sheet_name = 'Sheet1'
-        data.to_excel(excel_writer=excel_writer, sheet_name=sheet_name)
+            df = df.T
+        frames.append((_sanitize_sheet_name(raw_name, taken), df))
 
-    excel_writer.close()
+    if not frames:
+        raise ValueError("No DataFrames to write")
+
+    writer_kwargs = {"engine": "openpyxl", "mode": mode}
+    if mode == "a":
+        writer_kwargs["if_sheet_exists"] = if_sheet_exists
+
+    with pd.ExcelWriter(file_path, **writer_kwargs) as writer:
+        for name, df in frames:
+            df.to_excel(writer, sheet_name=name)
 
     return file_path
 
@@ -325,12 +341,23 @@ def save_df_dict_to_excel(datasets: Dict[Union[str, Enum, NamedTuple], pd.DataFr
                                     folder_name=folder_name,
                                     key=key)
 
-    excel_writer = pd.ExcelWriter(file_path, engine='openpyxl', mode=mode)
-    for key, data in datasets.items():
+    taken: set = set()
+    frames: List[Tuple[str, pd.DataFrame]] = []
+    for raw_name, obj in datasets.items():
+        df = _coerce_to_df(obj, str(raw_name))
+        if df is None:
+            continue
         if delocalize:
-            data = delocalize_df(data)
-        data.to_excel(excel_writer=excel_writer, sheet_name=key)
-    excel_writer.close()
+            df = delocalize_df(df)
+        frames.append((_sanitize_sheet_name(raw_name, taken), df))
+
+    if not frames:
+        raise ValueError("No DataFrames to write")
+
+    with pd.ExcelWriter(file_path, engine='openpyxl', mode=mode) as writer:
+        for name, df in frames:
+            df.to_excel(writer, sheet_name=name)
+
     return file_path
 
 
@@ -364,7 +391,7 @@ def load_df_dict_from_excel(file_name: str,
     for key in dataset_keys:
         try:
             df = excel_reader.parse(sheet_name=key, index_col=index_col)
-        except:
+        except Exception:
             raise TypeError(f"sheet_name data {key} nor found")
         if delocalize:
             df = delocalize_df(df)
@@ -385,16 +412,23 @@ def save_df_to_csv(df: pd.DataFrame,
                    folder_name: str = None,
                    key: str = None,
                    add_current_date: bool = False,
-                   local_path: Optional[str] = None
+                   local_path: Optional[str] = None,
+                   file_type: FileTypes = FileTypes.CSV
                    ) -> None:
     """
     pandas to csv
     """
+    if file_type not in (FileTypes.CSV, FileTypes.CSV_GZ):
+        raise ValueError(f"file_type must be CSV or CSV_GZ, got {file_type}")
+    df = _coerce_to_df(df, label=file_name or key or "dataframe")
+    if df is None:
+        raise ValueError("No DataFrame to write")
+
     if add_current_date:
         file_name = f"{file_name}_{pd.Timestamp.now().strftime(DATE_FORMAT)}"
 
     file_path = get_local_file_path(file_name=file_name,
-                                    file_type=FileTypes.CSV,
+                                    file_type=file_type,
                                     local_path=local_path,
                                     folder_name=folder_name,
                                     key=key)
@@ -409,13 +443,16 @@ def load_df_from_csv(file_name: Optional[str] = None,
                      parse_dates: bool = True,
                      dayfirst: Optional[bool] = None,
                      tz: str = None,
-                     drop_duplicated: bool = False
+                     drop_duplicated: bool = False,
+                     file_type: FileTypes = FileTypes.CSV
                      ) -> pd.DataFrame:
     """
     pandas from csv
     """
+    if file_type not in (FileTypes.CSV, FileTypes.CSV_GZ):
+        raise ValueError(f"file_type must be CSV or CSV_GZ, got {file_type}")
     file_path = get_local_file_path(file_name=file_name,
-                                    file_type=FileTypes.CSV,
+                                    file_type=file_type,
                                     local_path=local_path,
                                     folder_name=folder_name,
                                     key=key)
@@ -451,19 +488,28 @@ def load_df_from_csv(file_name: Optional[str] = None,
     return df
 
 
-def append_df_to_csv(df: pd.DataFrame,
+def update_df_in_csv(df: pd.DataFrame,
                      file_name: str = None,
                      folder_name: str = None,
                      key: str = None,
                      local_path: Optional[str] = None,
-                     keep: Optional[Literal['first', 'last']] = None
+                     keep: Optional[Literal['first', 'last']] = None,
+                     file_type: FileTypes = FileTypes.CSV
                      ) -> None:
     """
-    append csv file
+    update csv file with new rows: if the file exists, load the existing data,
+    concatenate with `df`, optionally drop duplicate index entries via `keep`,
+    and rewrite the file. If the file does not exist, write `df` as new file.
     """
+    if file_type not in (FileTypes.CSV, FileTypes.CSV_GZ):
+        raise ValueError(f"file_type must be CSV or CSV_GZ, got {file_type}")
+    df = _coerce_to_df(df, label=file_name or key or "dataframe")
+    if df is None:
+        raise ValueError("No DataFrame to update")
+
     # check if file exist
     file_path = get_local_file_path(file_name=file_name,
-                                    file_type=FileTypes.CSV,
+                                    file_type=file_type,
                                     local_path=local_path,
                                     folder_name=folder_name,
                                     key=key)
@@ -471,41 +517,45 @@ def append_df_to_csv(df: pd.DataFrame,
         old_df = load_df_from_csv(file_name=file_name,
                                   local_path=local_path,
                                   folder_name=folder_name,
-                                  key=key)
+                                  key=key,
+                                  file_type=file_type)
         df = pd.concat([old_df, df], axis=0)
         if keep is not None:
             df = df.loc[~df.index.duplicated(keep=keep)]
-
-    else:
-        pass
 
     save_df_to_csv(df=df,
                    file_name=file_name,
                    folder_name=folder_name,
                    key=key,
-                   local_path=local_path)
+                   local_path=local_path,
+                   file_type=file_type)
 
 
 def save_df_dict_to_csv(datasets: Dict[Union[str, Enum, NamedTuple], pd.DataFrame],
                         file_name: Optional[str] = None,
                         local_path: Optional[str] = None,
                         folder_name: str = None,
-                        add_current_date: bool = False
+                        add_current_date: bool = False,
+                        file_type: FileTypes = FileTypes.CSV
                         ) -> None:
     """
     pandas dict to csv files
     """
+    if file_type not in (FileTypes.CSV, FileTypes.CSV_GZ):
+        raise ValueError(f"file_type must be CSV or CSV_GZ, got {file_type}")
     if add_current_date:
         file_name = f"{file_name}_{pd.Timestamp.now().strftime(DATE_FORMAT)}"
 
-    for key, data in datasets.items():
-        if data is not None and isinstance(data, pd.DataFrame):
-            file_path = get_local_file_path(file_name=file_name,
-                                            file_type=FileTypes.CSV,
-                                            local_path=local_path,
-                                            folder_name=folder_name,
-                                            key=key)
-            data.to_csv(path_or_buf=file_path)
+    for raw_key, obj in datasets.items():
+        df = _coerce_to_df(obj, str(raw_key))
+        if df is None:
+            continue
+        file_path = get_local_file_path(file_name=file_name,
+                                        file_type=file_type,
+                                        local_path=local_path,
+                                        folder_name=folder_name,
+                                        key=raw_key)
+        df.to_csv(path_or_buf=file_path)
 
 
 def load_df_dict_from_csv(dataset_keys: List[Union[str, Enum, NamedTuple]],
@@ -515,15 +565,18 @@ def load_df_dict_from_csv(dataset_keys: List[Union[str, Enum, NamedTuple]],
                           is_index: bool = True,
                           dayfirst: Optional[bool] = None,  # will give priority to formats where day come first
                           force_not_found_error: bool = False,
+                          file_type: FileTypes = FileTypes.CSV
                           ) -> Dict[str, pd.DataFrame]:
     """
     pandas dict from csv files
     """
+    if file_type not in (FileTypes.CSV, FileTypes.CSV_GZ):
+        raise ValueError(f"file_type must be CSV or CSV_GZ, got {file_type}")
     index_col = 0 if is_index else None
     pandas_dict = {}
     for key in dataset_keys:
         file_path = get_local_file_path(file_name=file_name,
-                                        file_type=FileTypes.CSV,
+                                        file_type=file_type,
                                         local_path=local_path,
                                         folder_name=folder_name,
                                         key=key)
@@ -563,6 +616,10 @@ def save_df_to_feather(df: pd.DataFrame,
     save df to feather files
     index_col stands for the index: needs to be reset when saving and put back when loading
     """
+    df = _coerce_to_df(df, label=file_name or key or "dataframe")
+    if df is None:
+        raise ValueError("No DataFrame to write")
+
     file_path = get_local_file_path(file_name=file_name,
                                     file_type=FileTypes.FEATHER,
                                     local_path=local_path,
@@ -586,6 +643,10 @@ def append_df_to_feather(df: pd.DataFrame,
     """
     append csv file
     """
+    df = _coerce_to_df(df, label=file_name or key or "dataframe")
+    if df is None:
+        raise ValueError("No DataFrame to append")
+
     # check if file exist
     file_path = get_local_file_path(file_name=file_name,
                                     file_type=FileTypes.FEATHER,
@@ -601,9 +662,6 @@ def append_df_to_feather(df: pd.DataFrame,
         df = pd.concat([old_df, df], axis=0)
         if keep is not None:
             df = df.loc[~df.index.duplicated(keep=keep)]
-
-    else:
-        pass
 
     save_df_to_feather(df=df,
                        file_name=file_name,
@@ -649,16 +707,20 @@ def save_df_dict_to_feather(dfs: Dict[Union[str, Enum, NamedTuple], pd.DataFrame
     """
     pandas dict to csv files
     """
-    for key, df in dfs.items():
-        if df is not None and isinstance(df, pd.DataFrame):
-            file_path = get_local_file_path(file_name=file_name,
-                                            file_type=FileTypes.FEATHER,
-                                            local_path=local_path,
-                                            folder_name=folder_name,
-                                            key=key)
-            if index_col not in df.columns:
-                df = df.reset_index(names=index_col)
-            df.to_feather(path=file_path)
+    for raw_key, obj in dfs.items():
+        df = _coerce_to_df(obj, str(raw_key))
+        if df is None:
+            continue
+        file_path = get_local_file_path(file_name=file_name,
+                                        file_type=FileTypes.FEATHER,
+                                        local_path=local_path,
+                                        folder_name=folder_name,
+                                        key=raw_key)
+        if index_col is not None and index_col not in df.columns:
+            df = df.reset_index(names=index_col)
+        else:
+            df = df.reset_index(drop=True)
+        df.to_feather(path=file_path)
 
 
 def load_df_dict_from_feather(dataset_keys: List[Union[str, Enum, NamedTuple]],
@@ -709,6 +771,10 @@ def save_df_to_parquet(df: pd.DataFrame,
     """
     pandas to parquet
     """
+    df = _coerce_to_df(df, label=file_name or key or "dataframe")
+    if df is None:
+        raise ValueError("No DataFrame to write")
+
     file_path = get_local_file_path(file_name=file_name,
                                     file_type=FileTypes.PARQUET,
                                     local_path=local_path,
@@ -752,16 +818,18 @@ def save_df_dict_to_parquet(datasets: Dict[Union[str, Enum, NamedTuple], pd.Data
     """
     pandas dict to parquet files
     """
-    for key, data in datasets.items():
-        if data is not None:
-            file_path = get_local_file_path(file_name=file_name,
-                                            file_type=FileTypes.PARQUET,
-                                            local_path=local_path,
-                                            folder_name=folder_name,
-                                            key=key)
-            if delocalize:
-                data = delocalize_df(data)
-            data.to_parquet(path=file_path)
+    for raw_key, obj in datasets.items():
+        df = _coerce_to_df(obj, str(raw_key))
+        if df is None:
+            continue
+        file_path = get_local_file_path(file_name=file_name,
+                                        file_type=FileTypes.PARQUET,
+                                        local_path=local_path,
+                                        folder_name=folder_name,
+                                        key=raw_key)
+        if delocalize:
+            df = delocalize_df(df)
+        df.to_parquet(path=file_path)
 
 
 def load_df_dict_from_parquet(dataset_keys: List[Union[str, Enum, NamedTuple]],
@@ -898,22 +966,3 @@ def save_figs_to_pdf(figs: Union[List[plt.Figure], Dict[str, plt.Figure]],
     print(f"""<a href=r"{file_path}">link</a>""")
     print(f"created PDF doc: {file_path}")
     return file_path
-
-
-def check_df_for_duplicated_columns_index(df: pd.DataFrame) -> bool:
-    # Check for duplicated columns
-    duplicated_columns = df.columns[df.columns.duplicated()].tolist()
-    if duplicated_columns:
-        unique_dupes = list(set(duplicated_columns))
-        raise AssertionError(
-            f"Found {len(duplicated_columns)} duplicated column(s): {unique_dupes}"
-        )
-
-    # Check for duplicated index
-    duplicated_index = df.index[df.index.duplicated()].tolist()
-    if duplicated_index:
-        unique_dupes = list(set(duplicated_index))
-        raise AssertionError(
-            f"Found {len(duplicated_index)} duplicated index value(s): {unique_dupes}"
-        )
-    return True

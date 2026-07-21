@@ -2,11 +2,11 @@
 plot df as table
 """
 # packages
+import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.table import Table as Table
-from enum import Enum
 from typing import List, Tuple, Optional, Literal, Union
 
 # qis
@@ -61,6 +61,10 @@ def plot_df_table(df: Union[pd.DataFrame, pd.Series],
     """
     plot dataframe as maotplotlib table
     """
+    if df.empty:
+        warnings.warn('df is empty: no data to plot')
+        return None
+
     df = df.copy()  # data object will be changed
     if isinstance(df, pd.Series):
         df = df.to_frame()
@@ -84,17 +88,17 @@ def plot_df_table(df: Union[pd.DataFrame, pd.Series],
     # allocate size
     size = (np.array(df.shape[::-1]) + np.array([0, 1])) * np.array([col_widths[0], row_height])
 
-    if first_column_width is None:
-        first_column_width = col_widths[0]
-    #else:
-    #    col_widths[0] = first_column_width # after this change
-
     if ax is None:  # create new axis
         fig, ax = plt.subplots(figsize=size)
         ax.axis('off')
     else:  # add table to existing axis
         fig = None
         ax.axis('off')
+
+    if first_column_width is None:
+        first_column_width = col_widths[0]
+    #else:
+    #    col_widths[0] = first_column_width # after this change
 
     if var_format is not None:
         df = dfs.df_to_str(df=df, var_format=var_format)
@@ -352,37 +356,3 @@ def set_align_for_column(table: Table,
     cells = [key for key in table._cells if key[1] == col]
     for cell in cells:
         table.properties()["celld"][cell]._loc = align
-
-
-class LocalTests(Enum):
-    TABLE = 0
-
-
-def run_local_test(local_test: LocalTests):
-    """Run local tests for development and debugging purposes.
-
-    These are integration tests that download real data and generate reports.
-    Use for quick verification during development.
-    """
-
-    if local_test == LocalTests.TABLE:
-
-        cars = {'Brand': ['Honda Civic', 'Toyota Corolla', 'Ford Focus', 'Audi A4'],
-                'Price': [220.0, 250.0, 270.0, 35.0],
-                'Engine': [175.0, 300.0, 100.0, 500.0],
-                'Speed': [200.0, 150.0, 200.0, 175.0]}
-
-        data = pd.DataFrame.from_dict(cars)
-        data = data.set_index('Brand', drop=False)
-        print(data)
-        data['Price'] = data['Price']
-        data['Engine'] = data['Engine']
-        plot_df_table(df=data, heatmap_columns=[2], bold_font=False)
-        plot_df_table(df=data, heatmap_rows_columns=((0, len(data.index)), (3, 4)))
-
-    plt.show()
-
-
-if __name__ == '__main__':
-
-    run_local_test(local_test=LocalTests.TABLE)

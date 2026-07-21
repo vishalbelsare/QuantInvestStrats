@@ -278,6 +278,7 @@ def plot_periodic_returns_table(prices: pd.DataFrame,
         vline_columns = [len(data.index) - 1]
     else:
         vline_columns = None
+    data = data.replace({0.0: np.nan})
     fig = plot_heatmap(df=data,
                        vline_columns=vline_columns,
                        transpose=transpose,
@@ -364,7 +365,7 @@ def run_local_test(local_test: LocalTests):
     Use for quick verification during development.
     """
 
-    from qis.test_data import load_etf_data
+    from qis.tests.price_data_test import load_etf_data
     prices = load_etf_data().dropna()
 
     if local_test == LocalTests.PERIODIC_RETURNS_BY_ROW:

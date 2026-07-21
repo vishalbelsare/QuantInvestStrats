@@ -12,6 +12,8 @@ from enum import Enum
 from typing import Dict, Union, List, Optional, Tuple
 import qis as qis
 from qis import PerfStat, RegimeData, BenchmarkReturnsQuantilesRegime, PerfParams
+from qis.plots.utils import calc_table_height, get_n_markers
+from qis.utils.df_str import series_to_str
 
 regime_classifier = BenchmarkReturnsQuantilesRegime(freq='QE')
 PERF_PARAMS = PerfParams(freq='ME')
@@ -69,6 +71,7 @@ class SmartDiversificationReport:
                                                         max_overlay_weight=max_overlay_weight,
                                                         rebalancing_freq=rebalancing_freq,
                                                         is_principal_weight_fixed=is_principal_weight_fixed)
+        portfolio_navs = portfolio_navs.dropna(how='any')  # drop union-index padding
         cvar_table, _ = self.regime_classifier.compute_regimes_pa_perf_table(prices=portfolio_navs,
                                                                              benchmark=portfolio_navs.columns[0],
                                                                              perf_params=self.perf_params)
@@ -161,7 +164,7 @@ class SmartDiversificationReport:
             col_widths.append(15)
 
         for perf_column in perf_columns:
-            table_data[perf_column.to_str()] = qis.series_to_str(ds=cvar_table[perf_column.to_str()],
+            table_data[perf_column.to_str()] = series_to_str(ds=cvar_table[perf_column.to_str()],
                                                              var_format=perf_column.to_format(**kwargs))
             col_widths.append(7)
 
@@ -221,8 +224,8 @@ class SmartDiversificationReport:
                          **kwargs
                          ) -> plt.Figure:
         if ax is None:  # create new axis
-            height = qis.calc_table_height(num_rows=len(self.overlay_navs.columns),
-                                                       first_row_height=2.0)
+            height = calc_table_height(num_rows=len(self.overlay_navs.columns),
+                                       first_row_height=2.0)
             fig, ax = plt.subplots(1, 1, figsize=(height, height))
         else:
             fig = None
@@ -311,7 +314,7 @@ class SmartDiversificationReport:
             xy_datas[asset] = xy
             data_labels.append(portfolio_labels)
 
-        markers = qis.get_n_markers(n=len(xy_datas.keys()))
+        markers = get_n_markers(n=len(xy_datas.keys()))
         xlabel = xlabel or x_var.to_str()
         ylabel = ylabel or y_var.to_str()
 
@@ -496,7 +499,7 @@ def run_local_test(local_test: LocalTests):
     Use for quick verification during development.
     """
 
-    from qis.test_data import load_etf_data
+    from qis.tests.price_data_test import load_etf_data
     prices = load_etf_data()
     print(prices)
     overlays = ['TLT', 'GLD']
